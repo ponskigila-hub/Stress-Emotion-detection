@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+wordcloud
+scikit-learn
+imbalanced-learn
+datasets
+huggingface_hub
+pyarrow
+joblib

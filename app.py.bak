@@ -1,0 +1,1150 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import re
+import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud
+import time
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import LinearSVC
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    f1_score, confusion_matrix, classification_report
+)
+from imblearn.over_sampling import RandomOverSampler, SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.combine import SMOTETomek
+
+# ==========================================
+# PAGE CONFIG  (must be FIRST st call)
+# ==========================================
+st.set_page_config(
+    page_title="MindScan · Stress Detection",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ==========================================
+# SLANG DICTIONARIES
+# Sources:
+#   zeroix07/indo-slang-words        (HuggingFace)
+#   MariyaAnjum/genz-slang-dataset   (HuggingFace)
+#   acader/genz-alpha-slangs         (HuggingFace, MIT License)
+# ==========================================
+INDO_SLANG = {
+    "gw": "saya", "gue": "saya", "gwa": "saya",
+    "lo": "kamu", "lu": "kamu", "loe": "kamu", "elo": "kamu",
+    "ga": "tidak", "gak": "tidak", "nggak": "tidak", "ngga": "tidak",
+    "gakk": "tidak", "kagak": "tidak", "enggak": "tidak", "gabisa": "tidak bisa",
+    "udah": "sudah", "udh": "sudah", "dah": "sudah", "sdh": "sudah",
+    "lagi": "sedang", "lg": "sedang", "sdg": "sedang",
+    "blm": "belum", "belom": "belum",
+    "skrg": "sekarang", "skrang": "sekarang",
+    "emg": "memang", "emang": "memang",
+    "bgt": "sangat", "bngt": "sangat", "banget": "sangat",
+    "bs": "bisa",
+    "aja": "saja", "aj": "saja",
+    "jg": "juga",
+    "sm": "sama",
+    "tp": "tapi",
+    "kalo": "kalau", "klo": "kalau", "kl": "kalau",
+    "krn": "karena", "karna": "karena",
+    "yg": "yang",
+    "dgn": "dengan", "dg": "dengan",
+    "utk": "untuk", "bwt": "untuk", "buat": "untuk",
+    "dr": "dari",
+    "org": "orang",
+    "tmn": "teman", "temen": "teman",
+    "mo": "mau",
+    "hrs": "harus",
+    "capek": "lelah", "cape": "lelah",
+    "males": "malas",
+    "ribet": "rumit",
+    "bosen": "bosan", "bete": "bosan",
+    "stress": "stres",
+    "pusing": "pusing kepala", "puyeng": "pusing kepala",
+    "overwhelm": "kewalahan",
+    "deadline": "batas waktu",
+    "overthinking": "terlalu banyak berpikir",
+    "healing": "pemulihan diri",
+    "gapapa": "tidak apa-apa", "gpp": "tidak apa-apa",
+    "trs": "terus", "trus": "terus",
+    "jd": "jadi",
+    "sampe": "sampai", "ampe": "sampai",
+    "wkwk": "tertawa", "wkwkwk": "tertawa", "wkwkwkwk": "tertawa",
+    "haha": "tertawa", "hihi": "tertawa", "hehe": "tertawa",
+    "sih": "", "deh": "", "dong": "", "nih": "", "tuh": "",
+    "seneng": "senang", "kangen": "rindu",
+    "kaget": "terkejut",
+    "btw": "ngomong-ngomong",
+    "fyi": "sebagai informasi",
+    "omg": "astaga",
+    "wth": "apa ini",
+    "wtf": "apa ini",
+    "lol": "tertawa",
+    "brb": "sebentar kembali",
+    "ntar": "nanti",
+    "gaskeun": "lakukan saja",
+    "kesel": "kesal",
+    "nyesek": "menyakitkan hati",
+    "baper": "terlalu sensitif",
+    "gabut": "bosan tidak ada kerjaan",
+    "bucin": "budak cinta",
+    "php": "pemberi harapan palsu",
+    "bully": "mengintimidasi",
+    "julid": "membicarakan orang lain",
+    "toxic": "beracun merusak",
+    "insecure": "tidak percaya diri",
+    "mager": "malas gerak",
+    "santuy": "santai",
+    "gaes": "teman-teman",
+    "bro": "teman",
+    "sis": "teman",
+    "bestie": "sahabat",
+    "mantep": "bagus sekali", "mantul": "sangat bagus",
+    "parah": "sangat buruk",
+    "anjir": "ekspresi kaget", "anjay": "ekspresi kaget",
+    "gilak": "ekspresi kaget",
+    "aduh": "ekspresi keluhan",
+    "huft": "ekspresi lelah", "huff": "ekspresi lelah",
+    "zzz": "mengantuk lelah",
+    "burnout": "kelelahan total",
+    "burnt out": "kelelahan total",
+    "overwhelmed": "sangat kewalahan",
+}
+
+ENGLISH_SLANG = {
+    # Based on MariyaAnjum/genz-slang-dataset & acader/genz-alpha-slangs (MIT)
+    "no cap": "honestly true",
+    "cap": "lie",
+    "fr fr": "for real truly",
+    "fr": "for real",
+    "frfr": "for real truly",
+    "ngl": "not going to lie",
+    "tbh": "to be honest",
+    "imo": "in my opinion",
+    "imho": "in my humble opinion",
+    "real talk": "honestly speaking",
+    "on god": "i swear honestly",
+    "ong": "honestly truly",
+    "istg": "i swear seriously",
+    "bffr": "be serious for real",
+    "bussin": "very amazing",
+    "slay": "performing amazingly",
+    "slaying": "performing amazingly",
+    "fire": "amazing excellent",
+    "lit": "exciting amazing",
+    "goat": "greatest of all time",
+    "based": "admirable confident",
+    "snatched": "looking perfect",
+    "ate": "performed perfectly",
+    "ate and left no crumbs": "performed perfectly",
+    "understood the assignment": "performed perfectly",
+    "serving": "impressing everyone",
+    "w": "win success",
+    "big w": "big win",
+    "we are so back": "things are getting better",
+    "bet": "okay agreed",
+    "vibe": "mood feeling",
+    "vibing": "feeling good relaxed",
+    "hits different": "feels special",
+    "lowkey": "somewhat secretly",
+    "highkey": "openly very much",
+    "sus": "suspicious",
+    "rizz": "charm charisma",
+    "rizzed": "charmed someone",
+    "sigma": "independent strong person",
+    "main character": "feeling like protagonist",
+    "npc": "acting robotically",
+    "rent free": "constantly thinking about something",
+    "living rent free": "constantly thinking about something",
+    "its giving": "it feels like",
+    "giving": "resembling feeling like",
+    "era": "current phase of life",
+    "in my era": "currently going through a phase",
+    "soft launch": "subtly introducing relationship",
+    "hard launch": "publicly announcing relationship",
+    "situationship": "undefined romantic relationship",
+    "talking stage": "early romantic relationship stage",
+    "ghosted": "cut off contact without explanation",
+    "ghosting": "cutting off contact without explanation",
+    "left on read": "message seen but not replied to",
+    "mid": "mediocre average",
+    "slept on": "underappreciated underrated",
+    "cancel": "boycott reject",
+    "canceled": "boycotted rejected",
+    "tea": "gossip news",
+    "spill the tea": "share gossip",
+    "clout": "fame social influence",
+    "simp": "overly devoted person",
+    "simping": "being excessively devoted",
+    "red flag": "warning sign problem",
+    "green flag": "positive sign",
+    "ick": "sudden feeling of dislike",
+    "not okay": "feeling bad distressed",
+    "im not okay": "feeling bad distressed",
+    "not ok": "feeling bad distressed",
+    "send help": "need urgent help",
+    "i cannot": "overwhelmed",
+    "cant even": "overwhelmed",
+    "cant": "cannot",
+    "down bad": "feeling very low",
+    "in my feelings": "feeling emotional",
+    "falling apart": "breaking down emotionally",
+    "losing it": "losing emotional control",
+    "mental breakdown": "emotional collapse severe stress",
+    "spiraling": "getting worse emotionally",
+    "spiral": "negative thought loop",
+    "doom scrolling": "endlessly consuming negative content",
+    "doomscrolling": "endlessly consuming negative content",
+    "chronically online": "spending excessive time online",
+    "brain rot": "mental deterioration from media",
+    "brainrot": "mental deterioration from media",
+    "burnt out": "exhausted from overwork",
+    "burnout": "exhaustion from overwork",
+    "cooked": "in serious trouble finished",
+    "its over": "situation is hopeless",
+    "it's over": "situation is hopeless",
+    "crying rn": "very emotional distressed",
+    "crying": "feeling very sad",
+    "dead inside": "emotionally numb",
+    "ded": "very tired emotionally drained",
+    "im dead": "very tired exhausted",
+    "rip me": "feeling hopeless",
+    "hyperfixation": "obsessive intense focus",
+    "executive dysfunction": "difficulty starting completing tasks",
+    "unmotivated": "lacking motivation energy",
+    "procrastinating": "avoiding delaying tasks",
+    "gaslit": "manipulated into questioning reality",
+    "gaslighting": "manipulating someone perception",
+    "touch starved": "lacking physical connection",
+    "anxiety": "feeling worried anxious",
+    "anxious": "feeling nervous worried",
+    "stressed out": "very stressed",
+    "overwhelmed": "too much to handle distressed",
+    "l": "loss failure",
+    "taking an l": "experiencing failure",
+    "big l": "big failure",
+    "copium": "coping with denial",
+    "delulu": "delusional unrealistic",
+    "ratio": "being criticized overwhelmed",
+    "salty": "feeling bitter upset",
+    "pressed": "feeling angry upset",
+    "triggered": "emotionally reactive upset",
+    "oof": "expression of pain discomfort",
+    "bruh": "expression of disbelief frustration",
+    "cringe": "embarrassing uncomfortable",
+    "extra": "overly dramatic excessive",
+    "bad vibes": "negative energy feeling",
+    "vibe check failed": "not feeling good",
+    "smh": "disappointed disbelief",
+    "facepalm": "feeling embarrassed frustrated",
+    "idk": "i do not know",
+    "idc": "i do not care",
+    "nvm": "never mind",
+    "nah": "no",
+    "gonna": "going to",
+    "wanna": "want to",
+    "gotta": "have to",
+    "kinda": "kind of",
+    "sorta": "sort of",
+    "tryna": "trying to",
+    "finna": "going to",
+    "ion": "i do not",
+    "ain't": "is not",
+    "lmao": "laughing hard",
+    "lmfao": "laughing very hard",
+    "rofl": "laughing intensely",
+    "brb": "be right back",
+    "tbf": "to be fair",
+    "irl": "in real life",
+    "afk": "away from keyboard",
+    "rn": "right now",
+    "asap": "as soon as possible",
+}
+
+
+def normalize_slang(text):
+    """
+    Normalize Indonesian and English slang/abbreviations.
+    Sources: zeroix07/indo-slang-words, MariyaAnjum/genz-slang-dataset,
+             acader/genz-alpha-slangs (MIT License)
+    """
+    text = str(text).lower()
+    all_slang = {**INDO_SLANG, **ENGLISH_SLANG}
+    for slang, formal in sorted(all_slang.items(), key=lambda x: len(x[0]), reverse=True):
+        if not formal:
+            continue
+        pattern = r'(?<![a-zA-Z])' + re.escape(slang) + r'(?![a-zA-Z])'
+        text = re.sub(pattern, ' ' + formal + ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+# ==========================================
+# CUSTOM CSS
+# ==========================================
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+
+html, body, [class*="css"] { font-family: 'Syne', sans-serif; }
+.main { background-color: #09090f; }
+.block-container { padding: 2rem 2rem 3rem 2rem; }
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0d0d18 0%, #111128 100%);
+    border-right: 1px solid #1e1e3f;
+}
+[data-testid="stSidebar"] * { color: #c8c8e8 !important; }
+
+h1, h2, h3 { color: #e2e2ff !important; letter-spacing: -0.5px; }
+h1 { font-size: 2.2rem !important; font-weight: 800 !important; }
+h2 { font-size: 1.5rem !important; }
+
+.bento-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px; margin: 1rem 0;
+}
+.bento-card {
+    background: linear-gradient(135deg, #13132a 0%, #1a1a35 100%);
+    border: 1px solid #2a2a5a;
+    border-radius: 18px;
+    padding: 22px 20px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s, border-color 0.2s;
+}
+.bento-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 3px;
+    background: var(--accent, linear-gradient(90deg,#6366f1,#a78bfa));
+    border-radius: 18px 18px 0 0;
+}
+.bento-card:hover { transform: translateY(-3px); border-color: #6366f1; }
+.bento-label { font-size: 11px; color: #7878aa; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; font-family: 'DM Mono', monospace; }
+.bento-value { font-size: 2.2rem; font-weight: 800; color: #fff; line-height: 1; }
+.bento-sub   { font-size: 11px; color: #5a5a8a; margin-top: 6px; font-family: 'DM Mono', monospace; }
+
+.hero-banner {
+    background: linear-gradient(135deg, #1a1040 0%, #0f1a40 50%, #0a2040 100%);
+    border: 1px solid #2a2a6a;
+    border-radius: 24px;
+    padding: 40px 36px;
+    margin-bottom: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+.hero-banner::after {
+    content: '🧠';
+    position: absolute;
+    right: 40px; top: 50%;
+    transform: translateY(-50%);
+    font-size: 80px; opacity: 0.10;
+}
+.hero-title { font-size: 2.8rem; font-weight: 800; color: #fff; margin: 0 0 8px 0; }
+.hero-sub   { color: #8888cc; font-size: 1rem; margin: 0; line-height: 1.6; }
+.hero-pill  {
+    display: inline-block;
+    background: rgba(99,102,241,0.2);
+    border: 1px solid rgba(99,102,241,0.4);
+    color: #a78bfa;
+    padding: 4px 14px;
+    border-radius: 100px;
+    font-size: 12px; margin-bottom: 16px;
+    font-family: 'DM Mono', monospace;
+}
+.section-card {
+    background: #111128;
+    border: 1px solid #1e1e40;
+    border-radius: 18px;
+    padding: 24px; margin: 12px 0;
+}
+.pred-result {
+    border-radius: 20px; padding: 24px;
+    text-align: center; margin: 8px 0;
+    border: 2px solid transparent;
+}
+.pred-emotion { background: linear-gradient(135deg,#0f1a40,#1a2a60); border-color: #4f7cf7; }
+.pred-normal  { background: linear-gradient(135deg,#0a2a1a,#0f3020); border-color: #22c55e; }
+.pred-mild    { background: linear-gradient(135deg,#2a1f0a,#3a2a0f); border-color: #f59e0b; }
+.pred-high    { background: linear-gradient(135deg,#2a0a0a,#3a1010); border-color: #ef4444; }
+.pred-label   { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; font-family: 'DM Mono', monospace; }
+.pred-value   { font-size: 1.7rem; font-weight: 800; color: #fff; }
+
+.stButton > button {
+    background: linear-gradient(135deg,#4f46e5,#7c3aed) !important;
+    color: white !important; border: none !important;
+    border-radius: 12px !important; padding: 12px 24px !important;
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 700 !important; font-size: 15px !important;
+    transition: all 0.2s !important;
+}
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 24px rgba(99,102,241,0.4) !important;
+}
+.stSelectbox > div > div,
+.stTextArea  > div > div {
+    background-color: #13132a !important;
+    border-color: #2a2a5a !important;
+    color: #e0e0ff !important;
+    border-radius: 12px !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    background: #0d0d1f; border-radius: 12px; padding: 4px; gap: 4px;
+    border: 1px solid #1e1e40;
+}
+.stTabs [data-baseweb="tab"]   { border-radius: 8px; color: #7878aa; font-family: 'Syne', sans-serif; font-weight: 600; }
+.stTabs [aria-selected="true"] { background: linear-gradient(135deg,#4f46e5,#7c3aed) !important; color: white !important; }
+
+.step-row        { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-family: 'DM Mono', monospace; font-size: 13px; color: #9999cc; }
+.step-done       { color: #22c55e; }
+.step-active     { color: #a78bfa; }
+</style>
+""", unsafe_allow_html=True)
+
+plt.rcParams.update({
+    'axes.facecolor':   '#111128',
+    'figure.facecolor': '#111128',
+    'axes.edgecolor':   '#2a2a5a',
+    'axes.labelcolor':  '#8888bb',
+    'xtick.color':      '#7878aa',
+    'ytick.color':      '#7878aa',
+    'text.color':       '#ccccee',
+    'grid.color':       '#1e1e3f',
+    'grid.alpha':       0.5,
+})
+
+# ==========================================
+# SESSION STATE
+# ==========================================
+for _k in ["emotion_model", "stress_model", "last_metrics", "example_text"]:
+    if _k not in st.session_state:
+        st.session_state[_k] = None
+
+# ==========================================
+# LOAD DATA
+# ==========================================
+@st.cache_data
+def load_data():
+    emotion_df = pd.read_csv("data/emotion_accuracy_training.csv")
+    emotion_df = emotion_df.rename(columns={"tweet": "text"})
+    stress_df  = pd.read_csv("data/ugm_fess_labeled.csv")
+    label_col  = [c for c in stress_df.columns if "label" in c.lower()][0]
+    stress_df  = stress_df.rename(columns={"full_text": "text", label_col: "stress_label"})
+    stress_df["stress_label"] = stress_df["stress_label"].astype(str).str.replace(";", "")
+    stress_df["stress_label"] = pd.to_numeric(stress_df["stress_label"], errors="coerce")
+    stress_df = stress_df.dropna(subset=["stress_label", "text"])
+    stress_df["stress_label"] = stress_df["stress_label"].astype(int)
+    return emotion_df, stress_df
+
+def clean_text(text, use_slang=True):
+    text = str(text).lower()
+    if use_slang:
+        text = normalize_slang(text)
+    text = re.sub(r"http\S+|www\S+", "", text)
+    text = re.sub(r"@\w+|#\w+", "", text)
+    text = re.sub(r"[^a-zA-Z\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+def build_model(name):
+    if name == "Logistic Regression":
+        return LogisticRegression(max_iter=1000, class_weight="balanced", C=1.0)
+    if name == "Naive Bayes":
+        return MultinomialNB(alpha=0.5)
+    if name == "Linear SVM":
+        return LinearSVC(class_weight="balanced", max_iter=2000, C=1.0)
+
+def apply_balancing(X_vec, y, strategy):
+    if strategy == "Random Oversampling":
+        sampler = RandomOverSampler(random_state=42)
+    elif strategy == "SMOTE":
+        k = max(1, min(3, int(min(np.bincount(y.astype(int)))) - 1))
+        sampler = SMOTE(random_state=42, k_neighbors=k)
+    elif strategy == "Random Undersampling":
+        sampler = RandomUnderSampler(random_state=42)
+    elif strategy == "SMOTETomek":
+        sampler = SMOTETomek(random_state=42)
+    else:
+        return X_vec, y
+    return sampler.fit_resample(X_vec, y)
+
+# ==========================================
+# LOAD & PREPROCESS
+# ==========================================
+try:
+    emotion_df, stress_df = load_data()
+    emotion_df["clean_text"] = emotion_df["text"].apply(clean_text)
+    stress_df["clean_text"]  = stress_df["text"].apply(clean_text)
+    DATA_LOADED = True
+except Exception as _e:
+    DATA_LOADED = False
+    DATA_ERROR  = str(_e)
+
+LABELS_MAP = {0: "Normal", 1: "Mild Stress", 2: "High Stress"}
+BAR_COLORS = ["#22c55e", "#f59e0b", "#ef4444"]
+
+# ==========================================
+# SIDEBAR
+# ==========================================
+with st.sidebar:
+    st.markdown("""
+    <div style='padding:16px 0 24px 0;text-align:center;'>
+        <div style='font-size:36px;margin-bottom:8px;'>🧠</div>
+        <div style='font-size:18px;font-weight:800;color:#e0e0ff;'>MindScan</div>
+        <div style='font-size:11px;color:#5555aa;font-family:DM Mono,monospace;margin-top:4px;'>NLP STRESS DETECTOR v2</div>
+    </div>""", unsafe_allow_html=True)
+
+    page = st.radio("Menu",
+        ["🏠  Home","📊  EDA","⚙️  Preprocessing","🤖  Model Training","🔮  Prediction"],
+        label_visibility="collapsed")
+
+    st.markdown("---")
+
+    if DATA_LOADED:
+        vc = stress_df["stress_label"].value_counts().sort_index()
+        st.markdown("<div style='font-size:11px;color:#5555aa;font-family:DM Mono;margin-bottom:8px;'>DATASET STATUS</div>", unsafe_allow_html=True)
+        clr = {0:"#22c55e",1:"#f59e0b",2:"#ef4444"}
+        for lv, cnt in vc.items():
+            c = clr.get(int(lv),"#aaaacc")
+            n = LABELS_MAP.get(int(lv), str(lv))
+            st.markdown(f"""<div style='display:flex;justify-content:space-between;align-items:center;
+                background:#13132a;border-radius:8px;padding:8px 12px;margin:4px 0;border-left:3px solid {c};'>
+                <span style='font-size:12px;color:#9999cc;'>{n}</span>
+                <span style='font-size:13px;font-weight:700;color:{c};font-family:DM Mono;'>{cnt}</span>
+            </div>""", unsafe_allow_html=True)
+
+    if st.session_state.emotion_model:
+        st.markdown("""<div style='margin-top:16px;background:rgba(34,197,94,0.1);
+            border:1px solid rgba(34,197,94,0.3);border-radius:10px;padding:10px 14px;text-align:center;'>
+            <span style='color:#4ade80;font-size:12px;font-family:DM Mono;'>✓ MODEL READY</span>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown(f"""<div style='margin-top:20px;padding:12px;background:#0d0d20;border-radius:10px;border:1px solid #1e1e3f;'>
+        <div style='font-size:10px;color:#4444aa;font-family:DM Mono;margin-bottom:6px;'>SLANG SUPPORT</div>
+        <div style='font-size:11px;color:#6666aa;'>🇮🇩 Indo Slang: {len(INDO_SLANG)}+ kata</div>
+        <div style='font-size:11px;color:#6666aa;margin-top:2px;'>🇺🇸 EN Gen-Z: {len(ENGLISH_SLANG)}+ kata</div>
+    </div>""", unsafe_allow_html=True)
+
+# ==========================================
+# HOME
+# ==========================================
+if page == "🏠  Home":
+    st.markdown("""
+    <div class="hero-banner">
+        <div class="hero-pill">NLP · Machine Learning · Slang-Aware</div>
+        <div class="hero-title">MindScan</div>
+        <p class="hero-sub">Deteksi emosi dan tingkat stres dari teks media sosial dengan dukungan<br>
+        <b style='color:#a78bfa'>bahasa gaul Indonesia & Gen-Z English</b> secara otomatis.</p>
+    </div>""", unsafe_allow_html=True)
+
+    if not DATA_LOADED:
+        st.error(f"Gagal memuat data: {DATA_ERROR}")
+        st.stop()
+
+    sd = stress_df["stress_label"].value_counts().sort_index()
+    st.markdown(f"""
+    <div class="bento-grid">
+        <div class="bento-card" style="--accent:linear-gradient(90deg,#6366f1,#a78bfa)">
+            <div class="bento-label">Data Emosi</div>
+            <div class="bento-value">{len(emotion_df):,}</div>
+            <div class="bento-sub">{emotion_df["label"].nunique()} kelas</div>
+        </div>
+        <div class="bento-card" style="--accent:linear-gradient(90deg,#22c55e,#4ade80)">
+            <div class="bento-label">Data Stres</div>
+            <div class="bento-value">{len(stress_df):,}</div>
+            <div class="bento-sub">3 level stres</div>
+        </div>
+        <div class="bento-card" style="--accent:linear-gradient(90deg,#22c55e,#4ade80)">
+            <div class="bento-label">Normal</div>
+            <div class="bento-value">{sd.get(0,0):,}</div>
+            <div class="bento-sub">label 0</div>
+        </div>
+        <div class="bento-card" style="--accent:linear-gradient(90deg,#ef4444,#f87171)">
+            <div class="bento-label">Stres (1+2)</div>
+            <div class="bento-value">{sd.get(1,0)+sd.get(2,0):,}</div>
+            <div class="bento-sub">mild + high</div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### 🗂️ Alur Penggunaan")
+        for icon, title, desc in [
+            ("📊","EDA","Eksplorasi distribusi data & wordcloud"),
+            ("⚙️","Preprocessing","Preview cleaning + slang normalization"),
+            ("🤖","Model Training","Pilih model & strategi balancing lalu train"),
+            ("🔮","Prediction","Input teks → deteksi emosi & level stres"),
+        ]:
+            st.markdown(f"""<div style='display:flex;gap:14px;align-items:flex-start;padding:14px;
+                border-radius:12px;margin:8px 0;background:rgba(99,102,241,0.05);border:1px solid #1e1e40;'>
+                <span style='font-size:22px'>{icon}</span>
+                <div>
+                    <div style='font-weight:700;color:#c8c8ff;font-size:14px;'>{title}</div>
+                    <div style='color:#6666aa;font-size:12px;margin-top:2px;'>{desc}</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with c2:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### 📈 Distribusi Label Stres")
+        fig, ax = plt.subplots(figsize=(6,4))
+        x  = [LABELS_MAP.get(int(k),str(k)) for k in sd.index]
+        bs = ax.bar(x, sd.values, color=BAR_COLORS[:len(sd)], width=0.5, edgecolor='none')
+        ax.spines[["top","right"]].set_visible(False)
+        for bar, v in zip(bs, sd.values):
+            ax.text(bar.get_x()+bar.get_width()/2, v+2, f"{v:,}", ha='center', fontsize=11, fontweight='bold', color='white')
+        fig.tight_layout(); st.pyplot(fig); plt.close()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("##### 🌐 Slang Normalization Coverage")
+    s1,s2,s3,s4 = st.columns(4)
+    for col, label, val, sub, color in [
+        (s1,"Indo Slang",len(INDO_SLANG),"kosakata","#6366f1"),
+        (s2,"EN Gen-Z",len(ENGLISH_SLANG),"kosakata","#a78bfa"),
+        (s3,"Sumber",3,"HuggingFace datasets","#22c55e"),
+        (s4,"Bahasa",2,"ID + EN","#f59e0b"),
+    ]:
+        with col:
+            st.markdown(f"""<div style='background:#0d0d20;border:1px solid #1e1e40;border-radius:14px;
+                padding:16px;text-align:center;border-top:3px solid {color};'>
+                <div style='font-size:10px;color:#5555aa;font-family:DM Mono;margin-bottom:6px;'>{label}</div>
+                <div style='font-size:2rem;font-weight:800;color:{color};'>{val}+</div>
+                <div style='font-size:11px;color:#5a5a8a;margin-top:4px;'>{sub}</div>
+            </div>""", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ==========================================
+# EDA
+# ==========================================
+elif page == "📊  EDA":
+    st.title("📊 Exploratory Data Analysis")
+    tab1, tab2, tab3 = st.tabs(["   Emosi   ","   Stres   ","   WordCloud   "])
+
+    with tab1:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### Preview Data Emosi")
+        st.dataframe(emotion_df[["text","label","clean_text"]].head(10), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### Distribusi Kelas Emosi")
+        vc = emotion_df["label"].value_counts()
+        palette = sns.color_palette("husl", len(vc))
+        fig, axes = plt.subplots(1, 2, figsize=(13,4))
+        bars = axes[0].barh(vc.index, vc.values, color=palette, edgecolor='none', height=0.6)
+        axes[0].spines[["top","right","left"]].set_visible(False)
+        axes[0].set_xlabel("Jumlah")
+        for bar, v in zip(bars, vc.values):
+            axes[0].text(v+5, bar.get_y()+bar.get_height()/2, f"{v:,}", va='center', fontsize=10, color='white')
+        wedges,texts,autos = axes[1].pie(vc.values, labels=vc.index, autopct='%1.1f%%',
+            colors=palette, startangle=140, pctdistance=0.82,
+            wedgeprops=dict(edgecolor='#09090f', linewidth=2))
+        for a in autos: a.set_fontsize(9); a.set_color('white')
+        axes[1].set_facecolor('#111128')
+        fig.tight_layout(); st.pyplot(fig); plt.close()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab2:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### Preview Data Stres")
+        st.dataframe(stress_df[["text","stress_label","clean_text"]].head(10), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown("##### Distribusi Label (Original)")
+            vs = stress_df["stress_label"].value_counts().sort_index()
+            fig, ax = plt.subplots(figsize=(5,4))
+            xl = [LABELS_MAP.get(int(k),str(k)) for k in vs.index]
+            bs = ax.bar(xl, vs.values, color=BAR_COLORS[:len(vs)], width=0.5, edgecolor='none')
+            ax.spines[["top","right"]].set_visible(False)
+            for bar,v in zip(bs,vs.values):
+                ax.text(bar.get_x()+bar.get_width()/2, v+2, f"{v:,}", ha='center', fontsize=11, fontweight='bold', color='white')
+            fig.tight_layout(); st.pyplot(fig); plt.close()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown("##### Distribusi Panjang Teks")
+            stress_df["text_len"] = stress_df["text"].apply(lambda x: len(str(x).split()))
+            fig, ax = plt.subplots(figsize=(5,4))
+            for lbl, color in zip([0,1,2], BAR_COLORS):
+                sub = stress_df[stress_df["stress_label"]==lbl]["text_len"]
+                if len(sub): ax.hist(sub, bins=30, alpha=0.6, color=color, label=LABELS_MAP.get(lbl,str(lbl)), edgecolor='none')
+            ax.spines[["top","right"]].set_visible(False)
+            ax.set_xlabel("Jumlah Kata"); ax.set_ylabel("Frekuensi"); ax.legend(fontsize=9)
+            fig.tight_layout(); st.pyplot(fig); plt.close()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab3:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        wc_choice = st.selectbox("Pilih data",["Semua Emosi","Normal (0)","Mild Stress (1)","High Stress (2)"])
+        text_map = {
+            "Semua Emosi": " ".join(emotion_df["text"].astype(str)),
+            "Normal (0)":  " ".join(stress_df[stress_df["stress_label"]==0]["text"].astype(str)),
+            "Mild Stress (1)": " ".join(stress_df[stress_df["stress_label"]==1]["text"].astype(str)),
+            "High Stress (2)": " ".join(stress_df[stress_df["stress_label"]==2]["text"].astype(str)),
+        }
+        cmap_map = {"Semua Emosi":"viridis","Normal (0)":"Greens","Mild Stress (1)":"YlOrBr","High Stress (2)":"Reds"}
+        raw = text_map[wc_choice]
+        if raw.strip():
+            wc = WordCloud(width=1200, height=420, background_color="#111128",
+                colormap=cmap_map[wc_choice], max_words=120, prefer_horizontal=0.85).generate(raw)
+            fig, ax = plt.subplots(figsize=(14,5)); ax.imshow(wc, interpolation='bilinear'); ax.axis("off")
+            fig.patch.set_facecolor('#111128'); fig.tight_layout(pad=0)
+            st.pyplot(fig); plt.close()
+        else:
+            st.warning("Tidak ada data.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ==========================================
+# PREPROCESSING
+# ==========================================
+elif page == "⚙️  Preprocessing":
+    st.title("⚙️ Text Preprocessing")
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown("##### Pipeline Preprocessing")
+    cols = st.columns(6)
+    steps_info = [
+        ("①","Lowercase","Semua huruf kecil"),
+        ("②","Slang Norm.","Indo & Gen-Z slang"),
+        ("③","Remove URLs","http:// & www"),
+        ("④","Remove @/#","@mention #hashtag"),
+        ("⑤","Non-Alpha","Angka & simbol"),
+        ("⑥","Strip Spaces","Whitespace ekstra"),
+    ]
+    for col,(num,title,desc) in zip(cols,steps_info):
+        with col:
+            st.markdown(f"""<div style='background:#13132a;border:1px solid #2a2a5a;border-radius:14px;
+                padding:14px 10px;text-align:center;'>
+                <div style='font-size:18px;color:#a78bfa;'>{num}</div>
+                <div style='font-size:12px;font-weight:700;color:#e0e0ff;margin:6px 0;'>{title}</div>
+                <div style='font-size:10px;color:#6666aa;'>{desc}</div>
+            </div>""", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### Perbandingan Before / After")
+        sample = emotion_df.sample(6, random_state=42)
+        for _, row in sample.iterrows():
+            st.markdown(f"""<div style='margin:10px 0;padding:12px 16px;background:#0d0d20;
+                border-radius:10px;border:1px solid #1e1e3f;'>
+                <div style='font-size:10px;color:#f59e0b;font-family:DM Mono;margin-bottom:4px;'>ORIGINAL</div>
+                <div style='color:#aaaacc;font-size:12px;margin-bottom:8px;'>{str(row["text"])[:120]}</div>
+                <div style='font-size:10px;color:#22c55e;font-family:DM Mono;margin-bottom:4px;'>CLEANED</div>
+                <div style='color:#e0e0ff;font-size:12px;'>{str(row["clean_text"])[:120]}</div>
+            </div>""", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with c2:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### 🧪 Coba Preprocessing + Slang")
+        user_text = st.text_area("Masukkan teks:", height=110,
+            placeholder="contoh: gw stress bgt, deadline mulu, literally cant even fr fr")
+        use_slang_toggle = st.checkbox("Aktifkan Slang Normalization", value=True)
+
+        if user_text:
+            slang_out  = normalize_slang(user_text.lower()) if use_slang_toggle else user_text.lower()
+            final_text = clean_text(user_text, use_slang=use_slang_toggle)
+
+            if use_slang_toggle:
+                st.markdown(f"""<div style='background:#0a1a30;border:1px solid rgba(99,102,241,0.3);
+                    border-radius:10px;padding:12px;margin:8px 0;'>
+                    <div style='font-size:10px;color:#6366f1;font-family:DM Mono;margin-bottom:6px;'>SETELAH SLANG NORM.</div>
+                    <div style='color:#c8c8ff;font-size:12px;'>{slang_out[:300]}</div>
+                </div>""", unsafe_allow_html=True)
+
+            st.markdown(f"""<div style='background:#0a200a;border:1px solid rgba(34,197,94,0.3);
+                border-radius:10px;padding:12px;margin:8px 0;'>
+                <div style='font-size:10px;color:#22c55e;font-family:DM Mono;margin-bottom:6px;'>HASIL AKHIR (CLEANED)</div>
+                <div style='color:#e0e0ff;font-size:12px;'>{final_text if final_text else "(kosong)"}</div>
+            </div>""", unsafe_allow_html=True)
+
+            detected = []
+            tl = user_text.lower()
+            all_slang = {**INDO_SLANG, **ENGLISH_SLANG}
+            for slang in sorted(all_slang.keys(), key=len, reverse=True):
+                pat = r'(?<![a-zA-Z])' + re.escape(slang) + r'(?![a-zA-Z])'
+                if re.search(pat, tl): detected.append(slang)
+            if detected:
+                pills = "".join([f'<span style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3);color:#a78bfa;padding:2px 8px;border-radius:6px;font-size:11px;margin:2px;font-family:DM Mono;display:inline-block;">{w}</span>' for w in detected[:15]])
+                st.markdown(f"<div style='margin-top:8px;'><span style='font-size:10px;color:#7878aa;'>Slang terdeteksi: </span>{pills}</div>", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("##### Statistik Dataset")
+        avg_e = emotion_df["text"].apply(lambda x: len(str(x).split())).mean()
+        avg_s = stress_df["text"].apply(lambda x: len(str(x).split())).mean()
+        vocab = len(set(" ".join(emotion_df["clean_text"]).split()))
+        st.markdown(f"""<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px;'>
+            <div style='background:#13132a;border:1px solid #2a2a5a;border-radius:12px;padding:14px;text-align:center;'>
+                <div style='font-size:10px;color:#7878aa;font-family:DM Mono;'>AVG EMOSI</div>
+                <div style='font-size:20px;font-weight:800;color:#a78bfa;'>{avg_e:.0f}</div>
+                <div style='font-size:10px;color:#5a5a8a;'>kata/tweet</div>
+            </div>
+            <div style='background:#13132a;border:1px solid #2a2a5a;border-radius:12px;padding:14px;text-align:center;'>
+                <div style='font-size:10px;color:#7878aa;font-family:DM Mono;'>AVG STRES</div>
+                <div style='font-size:20px;font-weight:800;color:#6366f1;'>{avg_s:.0f}</div>
+                <div style='font-size:10px;color:#5a5a8a;'>kata/post</div>
+            </div>
+            <div style='background:#13132a;border:1px solid #2a2a5a;border-radius:12px;padding:14px;text-align:center;'>
+                <div style='font-size:10px;color:#7878aa;font-family:DM Mono;'>VOCAB</div>
+                <div style='font-size:20px;font-weight:800;color:#22c55e;'>{vocab:,}</div>
+                <div style='font-size:10px;color:#5a5a8a;'>unik token</div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ==========================================
+# MODEL TRAINING
+# ==========================================
+elif page == "🤖  Model Training":
+    st.title("🤖 Model Training")
+    col_cfg, col_preview = st.columns([1, 1.3])
+
+    with col_cfg:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### ⚙️ Konfigurasi Training")
+        model_name        = st.selectbox("Algoritma",["Logistic Regression","Naive Bayes","Linear SVM"])
+        balance_strategy  = st.selectbox("Strategi Balancing",
+            ["Random Oversampling","SMOTE","Random Undersampling","SMOTETomek","Tanpa Balancing"])
+        tfidf_features    = st.slider("TF-IDF Max Features", 1000, 20000, 10000, 1000)
+        test_size         = st.slider("Test Split Ratio", 0.1, 0.4, 0.2, 0.05)
+        use_slang_train   = st.checkbox("Pakai Slang Normalization", value=True)
+
+        info_map = {
+            "Random Oversampling": ("Menduplikasi sampel minoritas secara acak.","#6366f1"),
+            "SMOTE":               ("Membuat sampel sintetis dari interpolasi minoritas.","#a78bfa"),
+            "Random Undersampling":("Mengurangi sampel mayoritas secara acak.","#f59e0b"),
+            "SMOTETomek":          ("SMOTE + Tomek Links — boundary lebih bersih.","#22c55e"),
+            "Tanpa Balancing":     ("Tidak ada balancing.","#ef4444"),
+        }
+        it, ic = info_map[balance_strategy]
+        st.markdown(f"""<div style='background:rgba(99,102,241,0.07);border-left:3px solid {ic};
+            border-radius:0 8px 8px 0;padding:10px 14px;margin-top:8px;'>
+            <span style='color:#9999cc;font-size:12px;'>{it}</span>
+        </div>""", unsafe_allow_html=True)
+        train_btn = st.button("🚀 Train Model", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_preview:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown("##### 📊 Preview Distribusi Sebelum & Sesudah Balancing")
+        vc_orig = stress_df["stress_label"].value_counts().sort_index()
+        if balance_strategy != "Tanpa Balancing":
+            try:
+                _tf = TfidfVectorizer(max_features=2000)
+                _X  = _tf.fit_transform(stress_df["clean_text"])
+                _X2, _y2 = apply_balancing(_X, stress_df["stress_label"].values, balance_strategy)
+                vc_bal = pd.Series(_y2).value_counts().sort_index()
+            except Exception:
+                vc_bal = vc_orig
+        else:
+            vc_bal = vc_orig
+
+        fig, axes = plt.subplots(1, 2, figsize=(9,4))
+        for ax, vcd, title in [(axes[0],vc_orig,"Original"),(axes[1],vc_bal,f"Setelah {balance_strategy.split()[0]}")]:
+            xl = [LABELS_MAP.get(int(k),str(k)) for k in vcd.index]
+            bs = ax.bar(xl, vcd.values, color=BAR_COLORS[:len(vcd)], width=0.5, edgecolor='none')
+            ax.spines[["top","right"]].set_visible(False); ax.set_title(title, fontsize=11, pad=8)
+            for bar,v in zip(bs,vcd.values):
+                ax.text(bar.get_x()+bar.get_width()/2, v+2, f"{int(v):,}", ha='center', fontsize=9, fontweight='bold', color='white')
+        fig.tight_layout(pad=2); st.pyplot(fig); plt.close()
+
+        if len(vc_bal) > 1:
+            mx, mn = vc_bal.max(), vc_bal.min()
+            ratio  = mx/mn if mn > 0 else float('inf')
+            bscore = (1-(mx-mn)/mx)*100
+            st.markdown(f"""<div style='display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;'>
+                <span style='background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);
+                    color:#4ade80;padding:4px 12px;border-radius:100px;font-size:11px;font-family:DM Mono;'>
+                    Ratio: {ratio:.2f}x
+                </span>
+                <span style='background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);
+                    color:#4ade80;padding:4px 12px;border-radius:100px;font-size:11px;font-family:DM Mono;'>
+                    Balance Score: {bscore:.1f}%
+                </span>
+            </div>""", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---- TRAINING ----
+    if train_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        progress_ph = st.empty()
+
+        TRAIN_STEPS = [
+            "Preprocessing data",
+            "Fit TF-IDF Vectorizer",
+            f"Balancing: {balance_strategy}",
+            f"Train: {model_name}",
+            "Evaluasi model",
+            "Selesai ✓",
+        ]
+
+        def draw_progress(done_list, active=None):
+            html = '<div class="section-card"><div style="font-size:14px;font-weight:700;color:#e0e0ff;margin-bottom:12px;">Training Progress</div>'
+            for s in TRAIN_STEPS:
+                if s in done_list:   html += f'<div class="step-row step-done">✅ {s}</div>'
+                elif s == active:    html += f'<div class="step-row step-active">⟳ {s}</div>'
+                else:                html += f'<div class="step-row">○ {s}</div>'
+            return html + '</div>'
+
+        done = []
+
+        progress_ph.markdown(draw_progress(done, TRAIN_STEPS[0]), unsafe_allow_html=True)
+        Xe = emotion_df["text"].apply(lambda t: clean_text(t, use_slang_train))
+        ye = emotion_df["label"]
+        Xs = stress_df["text"].apply(lambda t: clean_text(t, use_slang_train))
+        ys = stress_df["stress_label"].values
+        done.append(TRAIN_STEPS[0])
+
+        progress_ph.markdown(draw_progress(done, TRAIN_STEPS[1]), unsafe_allow_html=True)
+        tfidf = TfidfVectorizer(max_features=tfidf_features, ngram_range=(1,2))
+        Xvec  = tfidf.fit_transform(Xs)
+        done.append(TRAIN_STEPS[1])
+
+        progress_ph.markdown(draw_progress(done, TRAIN_STEPS[2]), unsafe_allow_html=True)
+        try:
+            Xr, yr = apply_balancing(Xvec, ys, balance_strategy)
+        except Exception as be:
+            st.warning(f"Balancing gagal ({be}), pakai data original.")
+            Xr, yr = Xvec, ys
+        done.append(TRAIN_STEPS[2])
+
+        progress_ph.markdown(draw_progress(done, TRAIN_STEPS[3]), unsafe_allow_html=True)
+        Xte, Xve, yte, yve = train_test_split(Xe, ye, test_size=test_size, random_state=42)
+        e_pipe = Pipeline([
+            ("tfidf", TfidfVectorizer(max_features=tfidf_features, ngram_range=(1,2))),
+            ("clf",   build_model(model_name))
+        ])
+        e_pipe.fit(Xte, yte)
+        Xts, Xvs, yts, yvs = train_test_split(Xr, yr, test_size=test_size, random_state=42)
+        s_model = build_model(model_name)
+        s_model.fit(Xts, yts)
+        done.append(TRAIN_STEPS[3])
+
+        progress_ph.markdown(draw_progress(done, TRAIN_STEPS[4]), unsafe_allow_html=True)
+        pred_s = s_model.predict(Xvs)
+        pred_e = e_pipe.predict(Xve)
+        acc_s  = accuracy_score(yvs,  pred_s)
+        prec_s = precision_score(yvs, pred_s, average="weighted", zero_division=0)
+        rec_s  = recall_score(yvs,   pred_s, average="weighted", zero_division=0)
+        f1_s   = f1_score(yvs,       pred_s, average="weighted", zero_division=0)
+        acc_e  = accuracy_score(yve,  pred_e)
+        done += [TRAIN_STEPS[4], TRAIN_STEPS[5]]
+        progress_ph.markdown(draw_progress(done), unsafe_allow_html=True)
+
+        st.session_state.emotion_model = e_pipe
+        st.session_state.stress_model  = (s_model, tfidf, use_slang_train)
+        st.session_state.last_metrics  = dict(
+            acc_s=acc_s, prec_s=prec_s, rec_s=rec_s, f1_s=f1_s, acc_e=acc_e,
+            pred_stress=pred_s, y_test_s=yvs, model_name=model_name, balance=balance_strategy)
+
+        st.markdown(f"""
+        <div class="bento-grid" style="margin-top:20px;">
+            <div class="bento-card" style="--accent:linear-gradient(90deg,#6366f1,#a78bfa)">
+                <div class="bento-label">Accuracy</div><div class="bento-value">{acc_s:.1%}</div>
+                <div class="bento-sub">stress model</div>
+            </div>
+            <div class="bento-card" style="--accent:linear-gradient(90deg,#22c55e,#4ade80)">
+                <div class="bento-label">Precision</div><div class="bento-value">{prec_s:.1%}</div>
+                <div class="bento-sub">weighted avg</div>
+            </div>
+            <div class="bento-card" style="--accent:linear-gradient(90deg,#f59e0b,#fcd34d)">
+                <div class="bento-label">Recall</div><div class="bento-value">{rec_s:.1%}</div>
+                <div class="bento-sub">weighted avg</div>
+            </div>
+            <div class="bento-card" style="--accent:linear-gradient(90deg,#ef4444,#f87171)">
+                <div class="bento-label">F1-Score</div><div class="bento-value">{f1_s:.1%}</div>
+                <div class="bento-sub">weighted avg</div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        r1, r2 = st.columns(2)
+        with r1:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown("##### Confusion Matrix")
+            cm = confusion_matrix(yvs, pred_s)
+            ul = sorted(stress_df["stress_label"].unique())
+            tl = [LABELS_MAP.get(int(k),str(k)) for k in ul]
+            fig, ax = plt.subplots(figsize=(6,5))
+            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=tl[:cm.shape[1]], yticklabels=tl[:cm.shape[0]],
+                linewidths=1, linecolor='#111128', annot_kws={"size":14,"color":"white"}, ax=ax)
+            ax.set_xlabel("Predicted", fontsize=11); ax.set_ylabel("Actual", fontsize=11)
+            fig.tight_layout(); st.pyplot(fig); plt.close()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with r2:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown("##### Classification Report")
+            report = classification_report(yvs, pred_s, output_dict=True, zero_division=0)
+            st.dataframe(pd.DataFrame(report).transpose().round(3), use_container_width=True)
+            st.markdown(f"""<div style='margin-top:14px;padding:12px 16px;background:#0a1a0a;
+                border:1px solid rgba(34,197,94,0.2);border-radius:10px;'>
+                <span style='color:#22c55e;font-size:13px;'>
+                    ✓ <b>{model_name}</b> + <b>{balance_strategy}</b> selesai.<br>
+                    Emotion accuracy: <b>{acc_e:.1%}</b> | Slang: <b>{'ON' if use_slang_train else 'OFF'}</b>
+                </span>
+            </div>""", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    elif st.session_state.last_metrics:
+        m = st.session_state.last_metrics
+        st.markdown(f"""<div style='background:#111128;border:1px dashed #2a2a5a;border-radius:14px;
+            padding:18px 24px;margin-top:16px;'>
+            <span style='color:#6666aa;font-size:13px;'>
+                Model terakhir: <b style='color:#a78bfa'>{m["model_name"]}</b> +
+                <b style='color:#a78bfa'>{m["balance"]}</b> —
+                Accuracy: <b style='color:#22c55e'>{m["acc_s"]:.1%}</b> |
+                F1: <b style='color:#22c55e'>{m["f1_s"]:.1%}</b>
+            </span>
+        </div>""", unsafe_allow_html=True)
+
+
+# ==========================================
+# PREDICTION
+# ==========================================
+elif page == "🔮  Prediction":
+    st.title("🔮 Stress Prediction")
+
+    model_ready = (st.session_state.emotion_model is not None and st.session_state.stress_model is not None)
+
+    if not model_ready:
+        st.markdown("""<div style='background:#1a0f0a;border:1px solid rgba(245,158,11,0.3);
+            border-radius:16px;padding:24px;text-align:center;'>
+            <div style='font-size:40px;margin-bottom:12px;'>⚠️</div>
+            <div style='color:#f59e0b;font-size:16px;font-weight:700;'>Model belum dilatih</div>
+            <div style='color:#9999aa;font-size:13px;margin-top:8px;'>
+                Pergi ke halaman <b>🤖 Model Training</b> untuk melatih model terlebih dahulu.
+            </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        col_in, col_out = st.columns([1.2, 1])
+
+        with col_in:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown("##### 📝 Input Teks")
+
+            EXAMPLES = {
+                "😌 Normal":      "Hari ini sangat menyenangkan, bs jalan-jalan sm temen dan makan enak bareng",
+                "😥 Mild Stress": "banyak tugas deadline minggu ini, gw agak overwhelm tp masih bs handle sih",
+                "😫 High Stress": "udah 3 hari ga tidur krn tekanan kerja, literally cant even, burnout bgt fr fr",
+            }
+            ec1, ec2, ec3 = st.columns(3)
+            for col, label in zip([ec1,ec2,ec3], EXAMPLES.keys()):
+                with col:
+                    if st.button(label, use_container_width=True):
+                        st.session_state.example_text = EXAMPLES[label]
+                        st.rerun()
+
+            default_val = st.session_state.example_text if st.session_state.example_text else ""
+            user_input  = st.text_area("Teks:", value=default_val, height=140,
+                placeholder="Ketik atau pilih contoh di atas...", label_visibility="collapsed")
+
+            show_slang_step = st.checkbox("Tampilkan langkah slang normalization", value=False)
+            predict_btn     = st.button("🔍 Analisis Teks", use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with col_out:
+            if predict_btn and user_input.strip():
+                _, _, trained_slang = st.session_state.stress_model
+                cleaned      = clean_text(user_input, use_slang=trained_slang)
+                emotion_pred = st.session_state.emotion_model.predict([cleaned])[0]
+                s_model, tfidf, _ = st.session_state.stress_model
+                stress_vec   = tfidf.transform([cleaned])
+                stress_pred  = int(s_model.predict(stress_vec)[0])
+
+                STRESS_DISPLAY = {
+                    0: ("Normal",      "😌","pred-normal","#22c55e"),
+                    1: ("Mild Stress", "😥","pred-mild",  "#f59e0b"),
+                    2: ("High Stress", "😫","pred-high",  "#ef4444"),
+                }
+                s_label, s_icon, s_cls, s_color = STRESS_DISPLAY.get(stress_pred,("Unknown","❓","pred-normal","#aaaacc"))
+
+                proba_html = ""
+                if hasattr(s_model, "predict_proba"):
+                    try:
+                        proba = s_model.predict_proba(stress_vec)[0]
+                        pb = ""
+                        for i,(p,c) in enumerate(zip(proba,BAR_COLORS)):
+                            lbl = LABELS_MAP.get(i,str(i))
+                            pb += f"""<div style='margin:8px 0;'>
+                                <div style='display:flex;justify-content:space-between;margin-bottom:4px;'>
+                                    <span style='font-size:11px;color:#9999cc;font-family:DM Mono;'>{lbl}</span>
+                                    <span style='font-size:11px;color:{c};font-family:DM Mono;font-weight:700;'>{p:.1%}</span>
+                                </div>
+                                <div style='background:#1e1e3f;border-radius:100px;height:5px;'>
+                                    <div style='background:{c};width:{p*100:.1f}%;height:100%;border-radius:100px;'></div>
+                                </div>
+                            </div>"""
+                        proba_html = f"""<div style='margin-top:14px;padding:14px;background:#0d0d20;
+                            border-radius:12px;border:1px solid #1e1e3f;'>
+                            <div style='font-size:10px;color:#5555aa;font-family:DM Mono;margin-bottom:8px;'>CONFIDENCE SCORES</div>
+                            {pb}</div>"""
+                    except Exception:
+                        pass
+
+                slang_step_html = ""
+                if show_slang_step and trained_slang:
+                    normed = normalize_slang(user_input.lower())
+                    slang_step_html = f"""<div style='margin-top:12px;padding:12px;background:#0a1020;
+                        border-radius:10px;border:1px solid rgba(99,102,241,0.2);'>
+                        <div style='font-size:10px;color:#6366f1;font-family:DM Mono;margin-bottom:6px;'>SLANG NORMALIZED</div>
+                        <div style='font-size:11px;color:#8888cc;font-family:DM Mono;line-height:1.5;'>{normed[:250]}{"..." if len(normed)>250 else ""}</div>
+                    </div>"""
+
+                st.markdown(f"""
+                <div class="section-card">
+                    <div style='font-size:11px;color:#5555aa;font-family:DM Mono;margin-bottom:14px;'>HASIL ANALISIS</div>
+                    <div class="pred-result pred-emotion">
+                        <div class="pred-label">EMOSI TERDETEKSI</div>
+                        <div class="pred-value">🎭 {emotion_pred.title()}</div>
+                    </div>
+                    <div class="pred-result {s_cls}" style="margin-top:10px;">
+                        <div class="pred-label">LEVEL STRES</div>
+                        <div class="pred-value">{s_icon} {s_label}</div>
+                    </div>
+                    {proba_html}
+                    {slang_step_html}
+                    <div style='margin-top:12px;padding:10px 14px;background:#0d0d20;
+                        border-radius:10px;border:1px solid #1e1e3f;'>
+                        <div style='font-size:10px;color:#5555aa;font-family:DM Mono;margin-bottom:4px;'>CLEANED INPUT</div>
+                        <div style='font-size:11px;color:#7878aa;font-family:DM Mono;line-height:1.5;'>{cleaned[:200]}{"..." if len(cleaned)>200 else ""}</div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+            elif predict_btn and not user_input.strip():
+                st.warning("Masukkan teks terlebih dahulu.")
+            else:
+                st.markdown("""<div class="section-card" style="min-height:340px;display:flex;align-items:center;
+                    justify-content:center;text-align:center;">
+                    <div>
+                        <div style='font-size:48px;opacity:0.25;margin-bottom:14px;'>🔮</div>
+                        <div style='color:#5555aa;font-size:14px;'>
+                            Pilih contoh atau ketik teks,<br>
+                            lalu klik <b style='color:#7070cc;'>Analisis Teks</b>
+                        </div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
