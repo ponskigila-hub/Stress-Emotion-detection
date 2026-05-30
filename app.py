@@ -21,11 +21,11 @@ from data_loader import (
     EMOTION_LABEL_MAP, EMOTION_COLORS,
 )
 from utils import clean_text, detect_slang_words
-import pages.home         as page_home
-import pages.eda          as page_eda
-import pages.preprocessing as page_preprocessing
-import pages.training     as page_training
-import pages.prediction   as page_prediction
+import views.home         as page_home
+import views.eda          as page_eda
+import views.preprocessing as page_preprocessing
+import views.training     as page_training
+import views.prediction   as page_prediction
 
 # ── Global styling & matplotlib theme ───────────────────────────────────────
 inject_styles()
