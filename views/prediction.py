@@ -2,7 +2,7 @@
 views/prediction.py — Single-text prediction + CSV bulk analysis for MindScan.
 """
 
-
+import io
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
