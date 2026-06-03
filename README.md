@@ -68,10 +68,10 @@ mindscan/
 │   ├── training.py         # 🤖 Model Training page
 │   └── prediction.py       # 🔮 Prediction page
 │
-└── data/                   # ← you provide this folder
-    ├── emotion_accuracy_training.csv
-    ├── ugm_fess_labeled.csv
-    └── slang_indo.csv
+└── data/                   
+    ├── emotion_accuracy_training.csv # Emotion Dataset
+    ├── ugm_fess_labeled.csv # Stress Dataset
+    └── slang_indo.csv # Slang Dataset
 ```
 
 ---
