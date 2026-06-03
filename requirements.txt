@@ -4,8 +4,8 @@ numpy
 matplotlib
 seaborn
 wordcloud
-scikit-learn
-imbalanced-learn
+scikit-learn==1.4.2
+imbalanced-learn==0.12.3
 sastrawi
 huggingface_hub
 joblib
