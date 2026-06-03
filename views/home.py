@@ -1,5 +1,5 @@
 """
-pages/home.py — Home page for MindScan.
+views/home.py — Home page for MindScan.
 """
 
 import matplotlib.pyplot as plt
@@ -18,7 +18,7 @@ def render(emotion_df, stress_df):
     </div>
     """, unsafe_allow_html=True)
 
-    stress_dist = stress_df["stress_label"].value_counts().sort_index()
+    sd = stress_df["stress_label"].value_counts().sort_index()
 
     st.markdown(f"""
     <div class="bento-grid">
@@ -34,12 +34,12 @@ def render(emotion_df, stress_df):
         </div>
         <div class="bento-card">
             <div class="bento-label">Normal</div>
-            <div class="bento-value">{stress_dist.get(0, 0):,}</div>
+            <div class="bento-value">{sd.get(0,0):,}</div>
             <div class="bento-sub">label 0</div>
         </div>
         <div class="bento-card">
             <div class="bento-label">Stress</div>
-            <div class="bento-value">{stress_dist.get(1, 0) + stress_dist.get(2, 0):,}</div>
+            <div class="bento-value">{sd.get(1,0)+sd.get(2,0):,}</div>
             <div class="bento-sub">label 1 + 2</div>
         </div>
     </div>
@@ -50,21 +50,20 @@ def render(emotion_df, stress_df):
     with c1:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown("##### 🗂️ Alur Penggunaan Aplikasi")
-        steps = [
-            ("📊", "EDA", "Eksplorasi distribusi data dan wordcloud"),
+        for icon, title, desc in [
+            ("📊", "EDA",            "Eksplorasi distribusi data dan wordcloud"),
             ("⚙️", "Preprocessing", "Lihat hasil pembersihan teks"),
             ("🤖", "Model Training", "Pilih model + strategi balancing, lalu train"),
-            ("🔮", "Prediction", "Input teks untuk deteksi emosi & stres"),
-        ]
-        for icon, title, desc in steps:
+            ("🔮", "Prediction",     "Analisis teks tunggal atau bulk CSV"),
+        ]:
             st.markdown(f"""
-            <div style='display:flex; gap:14px; align-items:flex-start; padding:14px;
-                        border-radius:12px; margin:8px 0; background:rgba(108,92,231,0.05);
-                        border:1px solid #1e1e40;'>
-                <span style='font-size:22px'>{icon}</span>
+            <div style='display:flex;gap:12px;align-items:flex-start;padding:12px;
+                        border-radius:10px;margin:6px 0;
+                        background:rgba(108,92,231,0.05);border:1px solid #1e1e40;'>
+                <span style='font-size:20px'>{icon}</span>
                 <div>
-                    <div style='font-weight:700; color:#c8c8ff; font-size:14px;'>{title}</div>
-                    <div style='color:#6666aa; font-size:12px;'>{desc}</div>
+                    <div style='font-weight:700;color:#c8c8ff;font-size:13px;'>{title}</div>
+                    <div style='color:#6666aa;font-size:12px;'>{desc}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -73,16 +72,15 @@ def render(emotion_df, stress_df):
     with c2:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.markdown("##### 📈 Distribusi Label Stres")
-        labels_map = {0: "Normal", 1: "Mild Stress", 2: "High Stress"}
-        bar_colors = ["#22c55e", "#f59e0b", "#ef4444"]
-        fig, ax = plt.subplots(figsize=(6, 4))
-        x = [labels_map.get(int(k), str(k)) for k in stress_dist.index]
-        ax.bar(x, stress_dist.values, color=bar_colors[:len(x)], width=0.5, edgecolor='none')
-        ax.spines[['top', 'right']].set_visible(False)
+        labels_map = {0:"Normal", 1:"Mild Stress", 2:"High Stress"}
+        colors     = ["#22c55e", "#f59e0b", "#ef4444"]
+        fig, ax    = plt.subplots(figsize=(6, 4))
+        x          = [labels_map.get(int(k), str(k)) for k in sd.index]
+        bars       = ax.bar(x, sd.values, color=colors[:len(x)], width=0.5, edgecolor="none")
+        ax.spines[["top","right"]].set_visible(False)
         ax.set_ylabel("Jumlah", color="#7878aa")
-        for i, (xi, vi) in enumerate(zip(x, stress_dist.values)):
-            ax.text(i, vi + 5, f"{vi:,}", ha='center', fontsize=11, fontweight='bold', color='white')
+        for i, v in enumerate(sd.values):
+            ax.text(i, v+3, f"{v:,}", ha="center", fontsize=10, fontweight="bold", color="white")
         fig.tight_layout()
-        st.pyplot(fig)
-        plt.close()
+        st.pyplot(fig); plt.close()
         st.markdown('</div>', unsafe_allow_html=True)

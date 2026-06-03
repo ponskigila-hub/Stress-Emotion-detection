@@ -1,0 +1,62 @@
+# ── Streamlit secrets ───────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Dataset / data sensitif ─────────────────────────────────
+data/ugm_fess_labeled.csv
+data/emotion_accuracy_training.csv
+data/slang_indo.csv
+# Uncomment baris di bawah kalau mau block SEMUA csv sekaligus:
+# data/*.csv
+
+# ── Model yang disimpan ke disk ──────────────────────────────
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.pt
+*.pth
+models/
+
+# ── Python cache ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Virtual environment ──────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── Environment variables ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Jupyter Notebook ─────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS files ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor / IDE ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Log & output sementara ───────────────────────────────────
+*.log
+logs/
+output/
+results/
+
+# ── File upload sementara dari user ──────────────────────────
+uploads/
+tmp/
+temp/

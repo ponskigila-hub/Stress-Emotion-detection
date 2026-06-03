@@ -2,7 +2,7 @@
 views/prediction.py — Single-text prediction + CSV bulk analysis for MindScan.
 """
 
-import io
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -57,7 +57,7 @@ def render(slang_dict):
 
     tab_single, tab_bulk = st.tabs([
         "   🔍  Analisis Teks Tunggal   ",
-        "   📂  Analisis CSV Bulk (Clinical)   ",
+        "   👤  Analisis User Medsos   ",
     ])
 
     with tab_single:
@@ -445,9 +445,9 @@ def _render_verdict(
 
             <div class='pred-result' style='margin:0;'>
                 <div class='pred-label'>EMOSI DOMINAN</div>
-                <div class='pred-value'>{emotion_icon} {final_emotion_key.title()}</div>
+                <div class='pred-value'>{emotion_icon} {emotion_key.title()}</div>
                 <div style='font-size:12px;color:#a78bfa;font-family:DM Mono;margin-top:8px;'>
-                    avg confidence {avg_emotion_conf.get(final_emotion_key,0)*100:.1f}%
+                    avg confidence {avg_emotion_conf.get(emotion_key,0)*100:.1f}%
                 </div>
             </div>
 

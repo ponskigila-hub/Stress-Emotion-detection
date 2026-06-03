@@ -16,7 +16,9 @@ A Streamlit web application that detects **emotions** and **stress levels** from
 - [App Pages](#app-pages)
 - [ML Pipeline](#ml-pipeline)
 - [Text Preprocessing Pipeline](#text-preprocessing-pipeline)
+- [Anti-Overfitting Strategy](#anti-overfitting-strategy)
 - [Balancing Strategies](#balancing-strategies)
+- [Confidence-Weighted Majority Voting](#confidence-weighted-majority-voting)
 
 ---
 
@@ -27,7 +29,7 @@ MindScan analyzes Indonesian text (tweets, forum posts) and classifies it into:
 - **Emotion** — `happy`, `sad`, `anger`, `fear`, `love`, `surprise`, `neutral`
 - **Stress Level** — `0 = Normal`, `1 = Mild Stress`, `2 = High Stress`
 
-It uses TF-IDF vectorization combined with classical ML classifiers (Logistic Regression, Naive Bayes, Linear SVM), and supports multiple class-imbalance handling strategies.
+It supports both single-text prediction and **bulk CSV clinical analysis**, where all posts from one user are analyzed together and a final mental health verdict is produced using confidence-weighted majority voting.
 
 ---
 
@@ -35,165 +37,183 @@ It uses TF-IDF vectorization combined with classical ML classifiers (Logistic Re
 
 - 📊 **EDA** — Distribution charts, word clouds, and slang language analysis
 - ⚙️ **Preprocessing** — Live tokenization and stemming visualizations, before/after comparisons
-- 🤖 **Model Training** — Configurable model, TF-IDF features, test split, and balancing strategy with real-time progress tracking
-- 🔮 **Prediction** — Input any text and get instant emotion + stress detection with confidence scores
-- 🌙 **Dark UI** — Bento-style dark theme with custom CSS throughout
+- 🤖 **Model Training** — Configurable model, TF-IDF, balancing, with overfitting detection and cross-validation score
+- 🔮 **Prediction** — Single text analysis with confidence scores
+- 📂 **Bulk Clinical Analysis** — Upload a CSV of one user's posts, get a clinical mental health verdict
+- 🌙 **Dark UI** — Bento-style dark theme, horizontal top navigation bar
 
 ---
 
 ## Project Structure
 
 ```
-mindscan/
+Stress-Emotion-detection-main/
 │
-├── app.py                  # Entry point — page routing, sidebar, data bootstrap
-├── styles.py               # All CSS styles and matplotlib dark theme
-├── data_loader.py          # Dataset loading, caching, label/color constants
-├── utils.py                # Text cleaning, slang normalization, stemming
-├── models.py               # Model factory, balancing strategies
+├── app.py                        # Entry point — routing, top navbar, data bootstrap
+├── styles.py                     # All CSS styles and matplotlib dark theme
+├── data_loader.py                # Dataset loading, caching, label/color constants
+├── utils.py                      # Text cleaning, slang normalization, stopwords, stemming
+├── models.py                     # Model factory, balancing strategies
+├── requirements.txt              # Python dependencies
 │
 ├── views/
 │   ├── __init__.py
-│   ├── home.py             # 🏠 Home page
-│   ├── eda.py              # 📊 EDA page
-│   ├── preprocessing.py    # ⚙️  Preprocessing page
-│   ├── training.py         # 🤖 Model Training page
-│   └── prediction.py       # 🔮 Prediction page
+│   ├── home.py                   # 🏠 Home page
+│   ├── eda.py                    # 📊 EDA page
+│   ├── preprocessing.py          # ⚙️  Preprocessing page
+│   ├── training.py               # 🤖 Model Training page
+│   └── prediction.py             # 🔮 Prediction + 📂 Bulk Clinical Analysis
 │
-└── data/                   # ← you provide this folder
-    ├── emotion_accuracy_training.csv
-    ├── ugm_fess_labeled.csv
-    └── slang_indo.csv
+├── data/
+│   ├── emotion_accuracy_training.csv
+│   ├── ugm_fess_labeled.csv
+│   └── slang_indo.csv
+│
+└── user_analysis_example/
+    └── contoh_bulk_test.csv      # Sample CSV for bulk analysis testing
 ```
+
+> **Note:** Page modules live in `views/` (not `pages/`) to prevent Streamlit's built-in multipage navigator from appearing. Navigation is handled via a custom **horizontal top navbar** in `app.py`.
 
 ---
 
 ## File Reference
 
 ### `app.py`
-The main Streamlit entry point. Responsibilities:
-- Sets page config (title, icon, layout)
+Main entry point. Responsibilities:
+- Sets page config (title, icon, wide layout)
 - Injects global styles and matplotlib theme
-- Initializes session state keys: `emotion_model`, `stress_model`, `last_metrics`, `train_log`
+- Initializes session state: `emotion_model`, `stress_model`, `last_metrics`, `train_log`, `current_page`
 - Loads and preprocesses both datasets (cached)
-- Renders the sidebar with navigation and dataset status cards
-- Routes to the correct page module based on sidebar selection
+- Renders the **horizontal top navigation bar** using `st.columns`
+- Routes to the correct view module based on `st.session_state.current_page`
+- Renders sidebar dataset status cards
 
 ### `styles.py`
-Contains all visual styling. Nothing functional — purely CSS and theme config.
+All CSS — no logic. Three string blocks:
+
+| Block | Contents |
+|---|---|
+| `MAIN_CSS` | Layout, bento cards, buttons, tabs, hero banner, prediction panels, top navbar styles |
+| `METRIC_CSS` | Styled `st.metric` cards with glowing top borders |
+| `SIDEBAR_CSS` | Sidebar dataset status panel styling |
 
 | Function | Purpose |
 |---|---|
-| `inject_styles()` | Injects main CSS + metric card CSS into the app |
-| `inject_sidebar_styles()` | Injects sidebar radio button CSS (called inside sidebar context) |
-| `set_matplotlib_theme()` | Sets dark background/color rcParams for all matplotlib plots |
-
-Three CSS blocks are defined as module-level strings:
-- `MAIN_CSS` — layout, bento cards, buttons, tabs, hero banner, prediction result panels
-- `METRIC_CSS` — styled `st.metric` cards with glowing top borders
-- `SIDEBAR_CSS` — custom radio buttons (no bullet, centered text, consistent box size)
+| `inject_styles()` | Injects MAIN_CSS + METRIC_CSS |
+| `inject_sidebar_styles()` | Injects SIDEBAR_CSS |
+| `set_matplotlib_theme()` | Dark rcParams for all plots |
 
 ### `data_loader.py`
-Handles all data I/O and shared constants.
+Data I/O and shared constants.
 
 | Item | Description |
 |---|---|
-| `load_data()` | Loads and normalizes the emotion and stress CSVs. Cached with `@st.cache_data`. |
-| `load_slang_dict()` | Reads `slang_indo.csv` into a `{slang: formal}` dict. Cached. |
+| `load_data()` | Loads emotion and stress CSVs. `@st.cache_data`. |
+| `load_slang_dict()` | Reads `slang_indo.csv` → `{slang: formal}`. Cached. |
 | `STRESS_LABEL_MAP` | `{0: "Normal", 1: "Mild Stress", 2: "High Stress"}` |
-| `STRESS_COLORS` | Hex colors for each stress label (green / amber / red) |
-| `EMOTION_LABEL_MAP` | Display names with emoji for each emotion class |
-| `EMOTION_COLORS` | Hex colors for each emotion class |
+| `STRESS_COLORS` | Hex colors per stress label |
+| `EMOTION_LABEL_MAP` | Display names with emoji per emotion |
+| `EMOTION_COLORS` | Hex colors per emotion |
 
 ### `utils.py`
-Pure NLP utility functions with no Streamlit dependency.
-
-| Function | Description |
-|---|---|
-| `stemmer` | Module-level Sastrawi stemmer instance (initialized once) |
-| `remove_repeated_char(text)` | Collapses 3+ repeated chars to 2, e.g. `capeeek → capee` |
-| `normalize_slang(text, slang_dict)` | Replaces slang tokens with their formal equivalents |
-| `clean_text(text, slang_dict)` | Full pipeline: lowercase → strip URLs → strip @/# → keep alpha → collapse repeats → strip whitespace → normalize slang |
-| `detect_slang_words(text, slang_words)` | Returns list of slang tokens found in text |
-
-### `models.py`
-ML model construction and resampling logic.
+Pure NLP utilities — no Streamlit dependency.
 
 | Item | Description |
 |---|---|
-| `build_model(name)` | Returns an untrained sklearn classifier by name |
-| `apply_balancing(X_vec, y, strategy)` | Resamples feature matrix and labels using the chosen strategy |
-| `STRATEGY_INFO` | Dict mapping strategy names to `(description, hex_color)` tuples for UI display |
+| `stemmer` | Sastrawi stemmer, initialized once at module level |
+| `KEEP_WORDS` | Emotionally significant words exempt from stopword removal |
+| `remove_repeated_char(text)` | Collapses 3+ repeated chars to 2 |
+| `normalize_slang(text, slang_dict)` | Replaces slang with formal equivalents |
+| `remove_stopwords(text)` | Sastrawi stopword removal, skipping `KEEP_WORDS` |
+| `clean_text(text, slang_dict)` | Full pipeline: lowercase → URLs → @/# → alpha → repeats → slang → stopwords → stem |
+| `detect_slang_words(text, slang_words)` | Returns list of slang tokens in text |
 
-Supported models: `Logistic Regression`, `Naive Bayes`, `Linear SVM`
+**Why `KEEP_WORDS` matters:** Sastrawi removes words like `tidak`, `bukan`, `sangat` which are critical for stress detection. `KEEP_WORDS` preserves negations, intensifiers, and emotional vocabulary.
+
+### `models.py`
+Model construction and resampling.
+
+| Item | Description |
+|---|---|
+| `build_model(name)` | Returns untrained classifier with generalization-tuned hyperparameters |
+| `apply_balancing(X_vec, y, strategy)` | Resamples — call on training split only |
+| `STRATEGY_INFO` | `{strategy: (description, color)}` for UI |
+
+**Hyperparameter rationale:**
+
+| Model | Param | Value | Reason |
+|---|---|---|---|
+| Logistic Regression | `C` | `0.1` | Strong L2 → less vocab memorization |
+| Logistic Regression | `solver` | `saga` | Efficient multiclass + L2 |
+| Naive Bayes | `alpha` | `1.0` | Standard Laplace → handles unseen words |
+| Linear SVM | `C` | `0.1` | Wide margin → less noise sensitivity |
 
 ### `views/home.py`
-Renders the landing page. Shows the hero banner, four summary metric bento cards (total emotion data, total stress data, normal count, stress count), a usage flow guide, and a stress label distribution bar chart.
+Landing page: hero banner, 4 bento metric cards, usage flow guide, stress label bar chart.
 
 **Function:** `render(emotion_df, stress_df)`
 
 ### `views/eda.py`
-Four-tab exploratory data analysis page.
+Four-tab EDA page.
 
 **Function:** `render(emotion_df, stress_df, slang_words)`
 
 | Tab | Content |
 |---|---|
-| Emosi | Data preview table, horizontal bar chart + pie chart of emotion class distribution |
-| Stres | Data preview table, stress label bar chart, text length histogram by stress level |
-| WordCloud | Configurable word cloud (by dataset/label), slang word cloud |
-| Slang Analysis | Slang stats bento cards, top slang bar + pie charts, before/after normalization cards |
+| Emosi | Data preview, bar + pie chart of emotion distribution |
+| Stres | Data preview, stress label bar chart, text length histogram |
+| WordCloud | Configurable word cloud by label, slang word cloud |
+| Slang Analysis | Slang stats bento cards, top slang charts, before/after normalization |
 
 ### `views/preprocessing.py`
-Demonstrates the preprocessing pipeline interactively.
+Interactive preprocessing demo.
 
 **Function:** `render(emotion_df, stress_df, slang_dict)`
 
-- Live tokenization visualizer — renders each token as a styled badge
-- Live stemming table — shows original vs stemmed tokens side by side
-- Five step cards explaining the cleaning stages
-- Sample before/after comparison from the emotion dataset
-- Manual preprocessing tester with token-removal badges
-- Stats panel: average text length (emotion), average text length (stress), vocabulary size
+- Live tokenization (badge per token)
+- Live stemming table (original vs stemmed)
+- 5 cleaning step cards
+- Before/after comparison from emotion dataset
+- Manual tester with removed-token badges
+- Avg text length and vocabulary size stats
 
 ### `views/training.py`
-Full model training workflow.
+Full training workflow with anti-overfit improvements.
 
 **Function:** `render(emotion_df, stress_df)`
 
-Trains **two models simultaneously**:
-1. **Emotion model** — a `Pipeline(TF-IDF + classifier)` trained on `emotion_df`
-2. **Stress model** — a standalone classifier trained on TF-IDF vectors of `stress_df`, after optional resampling
+**Correct training order:**
+1. Split train/test with `stratify=True`
+2. Fit TF-IDF on training set only (`sublinear_tf=True`, `min_df=2`, `max_df=0.95`)
+3. Apply balancing to training vectors only
+4. Train classifier
+5. Evaluate on untouched test set
+6. Run 5-fold cross-validation → show CV F1 ± std
 
-After training, displays:
-- Metric bento cards (Accuracy, Precision, Recall, F1) for both models
-- TF-IDF keyword importance bar chart
-- Top influential words per class (Logistic Regression and SVM only)
-- Confusion matrices (heatmap)
-- Classification reports (per-class precision/recall/F1/support)
-
-Trained models and metrics are saved to `st.session_state` for use by the Prediction page.
+Shows overfitting warning if `train_acc − test_acc > 15%`.
 
 ### `views/prediction.py`
-Two-tab prediction page — single text and bulk CSV clinical analysis.
+Two-tab prediction page.
 
 **Function:** `render(slang_dict)`
 
-**Tab 1 — Analisis Teks Tunggal:** Single post analysis with emotion + stress prediction and per-class confidence bars.
+**Tab 1 — Single Text:** Emotion + stress prediction with per-class confidence bars.
 
-**Tab 2 — Analisis CSV Bulk (Clinical):**
-- Upload a CSV of all social media posts from one user (columns: `text`, `tweet`, `post`, `content`, or first column)
-- Runs confidence-weighted majority voting across every post
-- Renders a clinical verdict banner: dominant stress level, dominant emotion, clinical interpretation, and referral recommendation
-- Timeline scatter chart of confidence scores across posts
-- Full per-post detail table (stress label, stress conf, emotion, emotion conf)
-- Export: full detail CSV + clinical summary CSV
+**Tab 2 — Bulk Clinical Analysis (👤 Analisis User Medsos):**
+- Upload CSV of all posts from one user
+- Auto-detects text column (`text`, `tweet`, `post`, `content`, or first column)
+- Confidence-weighted majority voting across all posts
+- Clinical verdict banner: dominant stress, dominant emotion, interpretation, referral recommendation
+- Timeline scatter chart of per-post confidence scores
+- Per-post detail table
+- Export: full CSV + one-row clinical summary CSV
 
 ---
 
 ## Data Requirements
 
-Place these three files in a `data/` folder next to `app.py`:
+Place these three files in the `data/` folder:
 
 | File | Required Columns | Description |
 |---|---|---|
@@ -201,7 +221,7 @@ Place these three files in a `data/` folder next to `app.py`:
 | `ugm_fess_labeled.csv` | `full_text`, `*label*` | Post text + numeric stress label (0/1/2) |
 | `slang_indo.csv` | col 0 = slang, col 1 = formal | Indonesian slang normalization dictionary |
 
-The stress label column is detected automatically — any column whose name contains `"label"` (case-insensitive) is used.
+The stress label column is auto-detected — any column whose name contains `"label"` is used.
 
 ---
 
@@ -209,30 +229,14 @@ The stress label column is detected automatically — any column whose name cont
 
 **Python 3.8+ recommended.**
 
-Install all dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Or manually:
 
 ```bash
 pip install streamlit pandas numpy matplotlib seaborn scikit-learn imbalanced-learn wordcloud PySastrawi
-```
-
-Or create a `requirements.txt`:
-
-```
-streamlit
-pandas
-numpy
-matplotlib
-seaborn
-scikit-learn
-imbalanced-learn
-wordcloud
-PySastrawi
-```
-
-Then run:
-
-```bash
-pip install -r requirements.txt
 ```
 
 ---
@@ -240,27 +244,26 @@ pip install -r requirements.txt
 ## Running the App
 
 ```bash
-cd mindscan
 streamlit run app.py
 ```
 
-The app will open at `http://localhost:8501` in your browser.
+Opens at `http://localhost:8501`.
 
 ---
 
 ## App Pages
 
-Navigate using the sidebar menu:
+Navigation is via the **horizontal top navbar** (not sidebar).
 
 | Page | Purpose |
 |---|---|
 | 🏠 Home | Overview, dataset summary, usage guide |
-| 📊 EDA | Explore data distributions, word clouds, slang analysis |
-| ⚙️ Preprocessing | See and test the text cleaning pipeline |
-| 🤖 Model Training | Configure and train ML models, view evaluation metrics |
-| 🔮 Prediction | Detect emotion and stress from any text input |
+| 📊 EDA | Explore distributions, word clouds, slang analysis |
+| ⚙️ Preprocessing | See and test the cleaning pipeline |
+| 🤖 Model Training | Train, evaluate, detect overfitting |
+| 🔮 Prediction | Single text OR bulk CSV clinical analysis |
 
-> **Note:** You must train a model on the **Model Training** page before the **Prediction** page will work. Models are held in session state and reset when the browser tab is closed.
+> Train a model on the **Model Training** page first. Models are stored in session state and reset when the browser tab closes.
 
 ---
 
@@ -270,67 +273,86 @@ Navigate using the sidebar menu:
 Raw Text
    │
    ▼
-clean_text()          ← lowercase, remove URLs/@/#/symbols,
-   │                    collapse repeated chars, normalize slang
+clean_text()
+   │  lowercase → strip URLs/@/# → keep alpha
+   │  → collapse repeats → normalize slang
+   │  → remove stopwords (preserve KEEP_WORDS) → stem
    ▼
-TF-IDF Vectorizer     ← max_features configurable (1k–20k),
-   │                    bigrams enabled (ngram_range=(1,2))
-   ▼
-Balancing Strategy    ← optional resampling on training split only
+Train/Test Split  (stratify=True)
    │
-   ▼
-Classifier            ← Logistic Regression / Naive Bayes / Linear SVM
-   │
-   ▼
-Predicted Label       ← stress: 0/1/2   emotion: string class
+   ├─ Training Set ─────────────────────────────────────┐
+   │     TF-IDF fit_transform()                         │
+   │       sublinear_tf=True, min_df=2, max_df=0.95     │
+   │     Balancing (training vectors only)              │
+   │     Classifier.fit()                               │
+   │       LR C=0.1 / NB alpha=1.0 / SVM C=0.1         │
+   │                                                    │
+   └─ Test Set ─────────────────────────────────────────┤
+         TF-IDF transform() only                        │
+         Classifier.predict() → Metrics ◄───────────────┘
+                │
+                ▼
+         5-Fold CV on training set → CV F1 ± std
 ```
-
-Both models share the same TF-IDF feature space for stress detection. The emotion model uses a full sklearn `Pipeline` so vectorization and classification happen in a single `.predict()` call.
 
 ---
 
 ## Text Preprocessing Pipeline
 
-Each text goes through these steps in order inside `clean_text()`:
-
 | Step | What it does | Example |
 |---|---|---|
-| Lowercase | Converts all characters to lowercase | `"Capek BANGET"` → `"capek banget"` |
-| Remove URLs | Strips `http://`, `https://`, `www.` links | `"cek http://t.co/x"` → `"cek "` |
-| Remove @/# | Strips mentions and hashtags | `"@teman #stress"` → `" "` |
-| Remove non-alpha | Keeps only letters and spaces | `"capek!!!123"` → `"capek"` |
-| Collapse repeats | Max 2 consecutive identical chars | `"capeeeeek"` → `"capee"` |
-| Strip whitespace | Normalizes multiple spaces | `"capek  banget"` → `"capek banget"` |
-| Normalize slang | Replaces slang with formal words | `"gw"` → `"saya"` |
+| Lowercase | All to lowercase | `"Capek BANGET"` → `"capek banget"` |
+| Remove URLs | Strip links | `"cek http://t.co/x"` → `"cek"` |
+| Remove @/# | Strip mentions/hashtags | `"@teman #stress"` → `""` |
+| Remove non-alpha | Keep letters + spaces | `"capek!!!123"` → `"capek"` |
+| Collapse repeats | Max 2 identical consecutive chars | `"capeeeeek"` → `"capee"` |
+| Normalize slang | Replace with formal word | `"gw"` → `"saya"` |
+| Remove stopwords | Sastrawi, skip `KEEP_WORDS` | `"dan aku sangat capek"` → `"aku sangat capek"` |
+| Stem | Sastrawi stemmer | `"melelahkan"` → `"lelah"` |
+
+---
+
+## Anti-Overfitting Strategy
+
+| Problem | Old behavior | Fixed behavior |
+|---|---|---|
+| Data leakage | Balancing before split | Split first, balance training only |
+| TF-IDF leakage | `fit_transform` on full data | `fit` on train, `transform` on test |
+| No stratify | Random split skews class ratios | `stratify=y` preserves distribution |
+| High C | C=1.0 → memorizes training vocab | C=0.1 → stronger regularization |
+| No sublinear_tf | Dominant terms overwhelm features | `sublinear_tf=True` → log scaling |
+| No min_df | Rare noise words as features | `min_df=2` drops single-doc tokens |
+| No stopwords | Common words fill feature space | Sastrawi stopword removal |
+| No stemming | Same word = multiple features | All variants stem to same root |
+| No CV | No way to detect overfitting | 5-fold CV F1 shown after training |
+| No gap alert | User unaware of train-test gap | Warning if gap > 15% |
 
 ---
 
 ## Balancing Strategies
 
-Class imbalance is handled before fitting the stress classifier. Resampling is applied **only to the training split**, never to the test split.
+Applied **only to the training split**, never to the test set.
 
 | Strategy | Method | Best for |
 |---|---|---|
-| Random Oversampling | Duplicates minority class samples randomly | Quick fix, small datasets |
-| SMOTE | Generates synthetic minority samples via interpolation | Medium datasets, smooth boundaries |
-| Random Undersampling | Removes majority class samples randomly | Large datasets where data loss is acceptable |
-| SMOTETomek | SMOTE + Tomek Links to clean boundary noise | Best quality, slower |
+| Random Oversampling | Duplicates minority samples | Quick baseline |
+| SMOTE | Synthetic samples via interpolation | Medium datasets |
+| Random Undersampling | Removes majority samples | Large datasets |
+| SMOTETomek | SMOTE + Tomek Links for clean boundaries | Best quality |
 | Tanpa Balancing | No resampling | Already balanced data |
 
 ---
 
-## Confidence-Weighted Majority Voting (Bulk Analysis)
+## Confidence-Weighted Majority Voting
 
-This is the core clinical decision-support logic used in the **CSV Bulk Analysis** tab. Unlike simple majority voting (most frequent label wins), this method weights each prediction by the model's confidence.
+Used in Bulk Clinical Analysis. More robust than simple majority voting.
 
 | Step | Detail |
 |---|---|
-| Per-post prediction | Each post → label + full probability array (one score per class) |
+| Per-post prediction | Each post → label + full probability array |
 | Accumulate | Sum confidence scores per class across all posts |
-| Average | Divide by total post count → average confidence per class |
+| Average | Divide by total posts → avg confidence per class |
 | Verdict | Class with highest average confidence = final label |
-
-A post predicted as "High Stress" with 95% confidence contributes far more to the conclusion than one predicted at 51%. This makes the system robust to noisy or ambiguous individual posts.
 
 ```
 Example — 3 posts:
@@ -338,354 +360,17 @@ Example — 3 posts:
   Post 2 → Normal: 0.30  Mild: 0.60  High: 0.10
   Post 3 → Normal: 0.20  Mild: 0.70  High: 0.10
   ──────────────────────────────────────────────
-  Sum    → Normal: 1.30  Mild: 1.45  High: 0.25
   Avg    → Normal: 0.43  Mild: 0.48  High: 0.08
-  Verdict → Mild Stress  (majority vote alone = tie Normal/Mild)
+  Verdict → Mild Stress  (majority vote = tie; confidence breaks it)
 ```
 
-### CSV Format Requirements
-
-The uploaded file should look like this:
+### Bulk CSV Format
 
 ```
 text
-Hari ini gue ngerasa capek banget, tugas numpuk ga kelar-kelar
+Hari ini gue ngerasa capek banget
+Udah 3 hari ga bisa tidur, kepala pusing
 Seneng banget hari ini bisa ketemu temen lama
-Udah 3 hari ga bisa tidur, kepala pusing terus
-...
 ```
 
-Accepted column names: `text`, `tweet`, `post`, `content`, `kalimat`, `teks`. If none match, the first column is used automatically.
-
-### Clinical Output
-
-After analysis, the system produces:
-- **Dominant stress level** with average confidence score
-- **Dominant emotion** across all posts
-- **Clinical interpretation** and referral recommendation
-- **Timeline chart** showing confidence per post over time
-- **Exportable CSVs**: full per-post detail + one-row clinical summary
-
-# 🧠 MindScan — NLP Stress Detection
-
-A Streamlit web application that detects **emotions** and **stress levels** from Indonesian social media text using Natural Language Processing and Machine Learning.
-
-## Authors
-BINUS University students:
-1. Albertus Adrian
-2. Darren Star Limantoro
-3. Jonathan Raffael  
-4. Nicholas Driyadis Tjoe
-5. Steven Hosea 
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Project Structure](#project-structure)
-- [File Reference](#file-reference)
-- [Data Requirements](#data-requirements)
-- [Installation](#installation)
-- [Running the App](#running-the-app)
-- [App Pages](#app-pages)
-- [ML Pipeline](#ml-pipeline)
-- [Text Preprocessing Pipeline](#text-preprocessing-pipeline)
-- [Balancing Strategies](#balancing-strategies)
-
----
-
-## Overview
-
-MindScan analyzes Indonesian text (tweets, forum posts) and classifies it into:
-
-- **Emotion** — `happy`, `sad`, `anger`, `fear`, `love`, `surprise`, `neutral`
-- **Stress Level** — `0 = Normal`, `1 = Mild Stress`, `2 = High Stress`
-
-It uses TF-IDF vectorization combined with classical ML classifiers (Logistic Regression, Naive Bayes, Linear SVM), and supports multiple class-imbalance handling strategies.
-
----
-
-## Features
-
-- 📊 **EDA** — Distribution charts, word clouds, and slang language analysis
-- ⚙️ **Preprocessing** — Live tokenization and stemming visualizations, before/after comparisons
-- 🤖 **Model Training** — Configurable model, TF-IDF features, test split, and balancing strategy with real-time progress tracking
-- 🔮 **Prediction** — Input any text and get instant emotion + stress detection with confidence scores
-- 🌙 **Dark UI** — Bento-style dark theme with custom CSS throughout
-
----
-
-## Project Structure
-
-```
-mindscan/
-│
-├── app.py                  # Entry point — page routing, sidebar, data bootstrap
-├── styles.py               # All CSS styles and matplotlib dark theme
-├── data_loader.py          # Dataset loading, caching, label/color constants
-├── utils.py                # Text cleaning, slang normalization, stemming
-├── models.py               # Model factory, balancing strategies
-│
-├── pages/
-│   ├── __init__.py
-│   ├── home.py             # 🏠 Home page
-│   ├── eda.py              # 📊 EDA page
-│   ├── preprocessing.py    # ⚙️  Preprocessing page
-│   ├── training.py         # 🤖 Model Training page
-│   └── prediction.py       # 🔮 Prediction page
-│
-└── data/                   # ← you provide this folder
-    ├── emotion_accuracy_training.csv
-    ├── ugm_fess_labeled.csv
-    └── slang_indo.csv
-```
-
----
-
-## File Reference
-
-### `app.py`
-The main Streamlit entry point. Responsibilities:
-- Sets page config (title, icon, layout)
-- Injects global styles and matplotlib theme
-- Initializes session state keys: `emotion_model`, `stress_model`, `last_metrics`, `train_log`
-- Loads and preprocesses both datasets (cached)
-- Renders the sidebar with navigation and dataset status cards
-- Routes to the correct page module based on sidebar selection
-
-### `styles.py`
-Contains all visual styling. Nothing functional — purely CSS and theme config.
-
-| Function | Purpose |
-|---|---|
-| `inject_styles()` | Injects main CSS + metric card CSS into the app |
-| `inject_sidebar_styles()` | Injects sidebar radio button CSS (called inside sidebar context) |
-| `set_matplotlib_theme()` | Sets dark background/color rcParams for all matplotlib plots |
-
-Three CSS blocks are defined as module-level strings:
-- `MAIN_CSS` — layout, bento cards, buttons, tabs, hero banner, prediction result panels
-- `METRIC_CSS` — styled `st.metric` cards with glowing top borders
-- `SIDEBAR_CSS` — custom radio buttons (no bullet, centered text, consistent box size)
-
-### `data_loader.py`
-Handles all data I/O and shared constants.
-
-| Item | Description |
-|---|---|
-| `load_data()` | Loads and normalizes the emotion and stress CSVs. Cached with `@st.cache_data`. |
-| `load_slang_dict()` | Reads `slang_indo.csv` into a `{slang: formal}` dict. Cached. |
-| `STRESS_LABEL_MAP` | `{0: "Normal", 1: "Mild Stress", 2: "High Stress"}` |
-| `STRESS_COLORS` | Hex colors for each stress label (green / amber / red) |
-| `EMOTION_LABEL_MAP` | Display names with emoji for each emotion class |
-| `EMOTION_COLORS` | Hex colors for each emotion class |
-
-### `utils.py`
-Pure NLP utility functions with no Streamlit dependency.
-
-| Function | Description |
-|---|---|
-| `stemmer` | Module-level Sastrawi stemmer instance (initialized once) |
-| `remove_repeated_char(text)` | Collapses 3+ repeated chars to 2, e.g. `capeeek → capee` |
-| `normalize_slang(text, slang_dict)` | Replaces slang tokens with their formal equivalents |
-| `clean_text(text, slang_dict)` | Full pipeline: lowercase → strip URLs → strip @/# → keep alpha → collapse repeats → strip whitespace → normalize slang |
-| `detect_slang_words(text, slang_words)` | Returns list of slang tokens found in text |
-
-### `models.py`
-ML model construction and resampling logic.
-
-| Item | Description |
-|---|---|
-| `build_model(name)` | Returns an untrained sklearn classifier by name |
-| `apply_balancing(X_vec, y, strategy)` | Resamples feature matrix and labels using the chosen strategy |
-| `STRATEGY_INFO` | Dict mapping strategy names to `(description, hex_color)` tuples for UI display |
-
-Supported models: `Logistic Regression`, `Naive Bayes`, `Linear SVM`
-
-### `pages/home.py`
-Renders the landing page. Shows the hero banner, four summary metric bento cards (total emotion data, total stress data, normal count, stress count), a usage flow guide, and a stress label distribution bar chart.
-
-**Function:** `render(emotion_df, stress_df)`
-
-### `pages/eda.py`
-Four-tab exploratory data analysis page.
-
-**Function:** `render(emotion_df, stress_df, slang_words)`
-
-| Tab | Content |
-|---|---|
-| Emosi | Data preview table, horizontal bar chart + pie chart of emotion class distribution |
-| Stres | Data preview table, stress label bar chart, text length histogram by stress level |
-| WordCloud | Configurable word cloud (by dataset/label), slang word cloud |
-| Slang Analysis | Slang stats bento cards, top slang bar + pie charts, before/after normalization cards |
-
-### `pages/preprocessing.py`
-Demonstrates the preprocessing pipeline interactively.
-
-**Function:** `render(emotion_df, stress_df, slang_dict)`
-
-- Live tokenization visualizer — renders each token as a styled badge
-- Live stemming table — shows original vs stemmed tokens side by side
-- Five step cards explaining the cleaning stages
-- Sample before/after comparison from the emotion dataset
-- Manual preprocessing tester with token-removal badges
-- Stats panel: average text length (emotion), average text length (stress), vocabulary size
-
-### `pages/training.py`
-Full model training workflow.
-
-**Function:** `render(emotion_df, stress_df)`
-
-Trains **two models simultaneously**:
-1. **Emotion model** — a `Pipeline(TF-IDF + classifier)` trained on `emotion_df`
-2. **Stress model** — a standalone classifier trained on TF-IDF vectors of `stress_df`, after optional resampling
-
-After training, displays:
-- Metric bento cards (Accuracy, Precision, Recall, F1) for both models
-- TF-IDF keyword importance bar chart
-- Top influential words per class (Logistic Regression and SVM only)
-- Confusion matrices (heatmap)
-- Classification reports (per-class precision/recall/F1/support)
-
-Trained models and metrics are saved to `st.session_state` for use by the Prediction page.
-
-### `pages/prediction.py`
-Real-time text analysis page.
-
-**Function:** `render(slang_dict)`
-
-- Reads `emotion_model` and `stress_model` from session state
-- Applies `clean_text()` to user input
-- Predicts emotion via `emotion_pipeline.predict()`
-- Predicts stress level via TF-IDF transform + `stress_model.predict()`
-- Shows confidence bars using `predict_proba` (or softmax of `decision_function` for SVM)
-- Three quick-example buttons pre-fill the text area
-
----
-
-## Data Requirements
-
-Place these three files in a `data/` folder next to `app.py`:
-
-| File | Required Columns | Description |
-|---|---|---|
-| `emotion_accuracy_training.csv` | `tweet`, `label` | Tweet text + emotion label string |
-| `ugm_fess_labeled.csv` | `full_text`, `*label*` | Post text + numeric stress label (0/1/2) |
-| `slang_indo.csv` | col 0 = slang, col 1 = formal | Indonesian slang normalization dictionary |
-
-The stress label column is detected automatically — any column whose name contains `"label"` (case-insensitive) is used.
-
----
-
-## Installation
-
-**Python 3.8+ recommended.**
-
-Install all dependencies:
-
-```bash
-pip install streamlit pandas numpy matplotlib seaborn scikit-learn imbalanced-learn wordcloud PySastrawi
-```
-
-Or create a `requirements.txt`:
-
-```
-streamlit
-pandas
-numpy
-matplotlib
-seaborn
-scikit-learn
-imbalanced-learn
-wordcloud
-PySastrawi
-```
-
-Then run:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Running the App
-
-```bash
-cd mindscan
-streamlit run app.py
-```
-
-The app will open at `http://localhost:8501` in your browser.
-
----
-
-## App Pages
-
-Navigate using the sidebar menu:
-
-| Page | Purpose |
-|---|---|
-| 🏠 Home | Overview, dataset summary, usage guide |
-| 📊 EDA | Explore data distributions, word clouds, slang analysis |
-| ⚙️ Preprocessing | See and test the text cleaning pipeline |
-| 🤖 Model Training | Configure and train ML models, view evaluation metrics |
-| 🔮 Prediction | Detect emotion and stress from any text input |
-
-> **Note:** You must train a model on the **Model Training** page before the **Prediction** page will work. Models are held in session state and reset when the browser tab is closed.
-
----
-
-## ML Pipeline
-
-```
-Raw Text
-   │
-   ▼
-clean_text()          ← lowercase, remove URLs/@/#/symbols,
-   │                    collapse repeated chars, normalize slang
-   ▼
-TF-IDF Vectorizer     ← max_features configurable (1k–20k),
-   │                    bigrams enabled (ngram_range=(1,2))
-   ▼
-Balancing Strategy    ← optional resampling on training split only
-   │
-   ▼
-Classifier            ← Logistic Regression / Naive Bayes / Linear SVM
-   │
-   ▼
-Predicted Label       ← stress: 0/1/2   emotion: string class
-```
-
-Both models share the same TF-IDF feature space for stress detection. The emotion model uses a full sklearn `Pipeline` so vectorization and classification happen in a single `.predict()` call.
-
----
-
-## Text Preprocessing Pipeline
-
-Each text goes through these steps in order inside `clean_text()`:
-
-| Step | What it does | Example |
-|---|---|---|
-| Lowercase | Converts all characters to lowercase | `"Capek BANGET"` → `"capek banget"` |
-| Remove URLs | Strips `http://`, `https://`, `www.` links | `"cek http://t.co/x"` → `"cek "` |
-| Remove @/# | Strips mentions and hashtags | `"@teman #stress"` → `" "` |
-| Remove non-alpha | Keeps only letters and spaces | `"capek!!!123"` → `"capek"` |
-| Collapse repeats | Max 2 consecutive identical chars | `"capeeeeek"` → `"capee"` |
-| Strip whitespace | Normalizes multiple spaces | `"capek  banget"` → `"capek banget"` |
-| Normalize slang | Replaces slang with formal words | `"gw"` → `"saya"` |
-
----
-
-## Balancing Strategies
-
-Class imbalance is handled before fitting the stress classifier. Resampling is applied **only to the training split**, never to the test split.
-
-| Strategy | Method | Best for |
-|---|---|---|
-| Random Oversampling | Duplicates minority class samples randomly | Quick fix, small datasets |
-| SMOTE | Generates synthetic minority samples via interpolation | Medium datasets, smooth boundaries |
-| Random Undersampling | Removes majority class samples randomly | Large datasets where data loss is acceptable |
-| SMOTETomek | SMOTE + Tomek Links to clean boundary noise | Best quality, slower |
-| Tanpa Balancing | No resampling | Already balanced data |
+Accepted column names: `text`, `tweet`, `post`, `content`, `kalimat`, `teks`. Falls back to first column if none match. A sample file is provided at `user_analysis_example/contoh_bulk_test.csv`.
