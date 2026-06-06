@@ -10,7 +10,7 @@ import seaborn as sns
 import streamlit as st
 from streamlit.components.v1 import html
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold   # 🔍 NEW: added cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
@@ -272,6 +272,10 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     done += [all_steps[4], all_steps[5]]
     progress_ph.markdown(render_progress(done), unsafe_allow_html=True)
 
+    # 🔍 NEW: Overfitting & Cross-Validation Analysis (Stress Model)
+    with st.expander("🔍 Overfitting & Cross-Validation Analysis (Stress Model)", expanded=False):
+        _render_overfitting_analysis(stress_model, X_train_s, y_train_s, X_test_s, y_test_s, X_resampled, y_resampled, model_name)
+
     # Save to session
     st.session_state.emotion_model = emotion_pipeline
     st.session_state.stress_model  = (stress_model, tfidf)
@@ -284,6 +288,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     # ── Stress evaluation ──
     st.markdown("## Stress Model Evaluation")
     _render_metric_cards(acc_s, prec_s, rec_s, f1_s, "stress model")
+    
     st.markdown("<br>", unsafe_allow_html=True)
 
     _render_tfidf_analysis(tfidf, X_vec)
@@ -309,12 +314,226 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
 
     _render_metric_cards(acc_e2, prec_e, rec_e, f1_e, "emotion model")
 
+    # 🔍 NEW: Overfitting & Cross-Validation for Emotion Model
+    with st.expander("🔍 Overfitting & Cross-Validation Analysis (Emotion Model)", expanded=False):
+        _render_overfitting_analysis_emotion(
+            emotion_pipeline,
+            X_train_e, y_train_e,
+            X_test_e, y_test_e,
+            X_emotion, y_emotion,   # full dataset (original texts, not resampled)
+            model_name
+        )
+
     ec1, ec2 = st.columns(2)
     emotion_ticks = sorted(emotion_df["label"].unique())
     with ec1:
         _render_confusion_matrix(y_test_e, pred_emotion2, emotion_ticks, {v: v for v in emotion_ticks})
     with ec2:
         _render_classification_report(y_test_e, pred_emotion2)
+
+
+def _render_overfitting_analysis(model, X_train, y_train, X_test, y_test, X_full, y_full, model_name):
+    """
+    Computes train/test gap and performs k-fold cross-validation (5 folds)
+    on the full (resampled) dataset. Displays metrics using bento cards
+    and a styled recommendation box.
+    """
+    # Train accuracy (on the training split)
+    train_pred = model.predict(X_train)
+    train_acc = accuracy_score(y_train, train_pred)
+    
+    # Test accuracy (already available)
+    test_acc = accuracy_score(y_test, model.predict(X_test))
+    
+    gap = train_acc - test_acc
+    
+    # Cross-validation on the full dataset
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_acc_scores = cross_val_score(model, X_full, y_full, cv=cv, scoring='accuracy')
+    cv_f1_scores  = cross_val_score(model, X_full, y_full, cv=cv, scoring='f1_weighted')
+    
+    # --- Metric Cards (same bento-grid as _render_metric_cards) ---
+    st.markdown("""
+    <div class="bento-grid" style="margin-top:0px; margin-bottom:20px;">
+        <div class="bento-card">
+            <div class="bento-label">📈 Train Accuracy</div>
+            <div class="bento-value">{:.1%}</div>
+            <div class="bento-sub">on training split</div>
+        </div>
+        <div class="bento-card">
+            <div class="bento-label">📉 Test Accuracy</div>
+            <div class="bento-value">{:.1%}</div>
+            <div class="bento-sub">gap = {:.1%}</div>
+        </div>
+        <div class="bento-card">
+            <div class="bento-label">🔁 CV Accuracy</div>
+            <div class="bento-value">{:.1%} ± {:.1%}</div>
+            <div class="bento-sub">5-fold stratified</div>
+        </div>
+        <div class="bento-card">
+            <div class="bento-label">🎯 CV F1 (weighted)</div>
+            <div class="bento-value">{:.1%} ± {:.1%}</div>
+            <div class="bento-sub">5-fold stratified</div>
+        </div>
+    </div>
+    """.format(train_acc, test_acc, gap, cv_acc_scores.mean(), cv_acc_scores.std(), cv_f1_scores.mean(), cv_f1_scores.std()), unsafe_allow_html=True)
+    
+    # --- Plot with dark theme matching app ---
+    fig, ax = plt.subplots(figsize=(6, 3))
+    fig.patch.set_facecolor('#111128')
+    ax.set_facecolor('#111128')
+    ax.plot(range(1, 6), cv_acc_scores, 'o-', color='#f59e0b', label='Accuracy per fold')
+    ax.axhline(y=cv_acc_scores.mean(), color='#22c55e', linestyle='--', label=f'Mean = {cv_acc_scores.mean():.1%}')
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Fold", color='#c8c8ff')
+    ax.set_ylabel("Accuracy", color='#c8c8ff')
+    ax.set_title(f"{model_name} – 5-Fold CV Scores", color='#e0e0ff')
+    ax.legend(facecolor='#1e1e3a', labelcolor='#c8c8ff')
+    ax.tick_params(colors='#c8c8ff')
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.spines['bottom'].set_visible(True)
+    ax.spines['left'].set_visible(True)
+    ax.spines['bottom'].set_color('#2a2a5a')
+    ax.spines['left'].set_color('#2a2a5a')
+    st.pyplot(fig)
+    plt.close()
+    
+    # --- Recommendation Box (styled like STRATEGY_INFO) ---
+    if gap > 0.05:
+        box_color = '#ef4444'
+        icon = '⚠️'
+        title = 'Potential Overfitting Detected'
+        message = f"""
+        Train accuracy ({train_acc:.1%}) is **{gap:.1%} higher** than test accuracy ({test_acc:.1%}).  
+        The model may be memorising the training data.
+
+        """
+    elif cv_acc_scores.std() > 0.03:
+        box_color = '#f59e0b'
+        icon = 'ℹ️'
+        title = 'Moderate Instability'
+        message = f"""
+        Cross‑validation accuracy varies by {cv_acc_scores.std():.1%}.  
+        The model's performance depends on the data split.
+        """
+    else:
+        box_color = '#22c55e'
+        icon = '✅'
+        title = 'Good Generalisation'
+        message = f"""
+        Train‑test gap is only {gap:.1%} and cross‑validation scores are stable (std = {cv_acc_scores.std():.1%}).  
+        The model is not overfitting and should perform well on unseen data.
+        """
+    
+    st.markdown(f"""
+    <div style='background:rgba(99,102,241,0.07); border-left:3px solid {box_color};
+                border-radius:0 8px 8px 0; padding:12px 14px; margin-top:16px;'>
+        <span style='color:#e0e0ff; font-weight:700;'>{icon} {title}</span><br>
+        <span style='color:#9999cc; font-size:12px;'>{message}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ──────────────────────────────────────────
+# 🔍 OVERFITTING & CROSS-VALIDATION (Emotion Model)
+# ──────────────────────────────────────────
+def _render_overfitting_analysis_emotion(pipeline, X_train, y_train, X_test, y_test, X_full, y_full, model_name):
+    """
+    Computes train/test gap and 5-fold cross-validation for the emotion pipeline.
+    Styling matches the stress analysis (bento cards, dark plot, recommendation box).
+    """
+    # Train accuracy
+    train_pred = pipeline.predict(X_train)
+    train_acc = accuracy_score(y_train, train_pred)
+    test_acc = accuracy_score(y_test, pipeline.predict(X_test))
+    gap = train_acc - test_acc
+
+    # Cross-validation on full dataset (using the pipeline)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_acc_scores = cross_val_score(pipeline, X_full, y_full, cv=cv, scoring='accuracy')
+    cv_f1_scores  = cross_val_score(pipeline, X_full, y_full, cv=cv, scoring='f1_weighted')
+
+    # --- Metric Cards (bento-grid) ---
+    st.markdown("""
+    <div class="bento-grid" style="margin-top:0px; margin-bottom:20px;">
+        <div class="bento-card">
+            <div class="bento-label">📈 Train Accuracy</div>
+            <div class="bento-value">{:.1%}</div>
+            <div class="bento-sub">on training split</div>
+        </div>
+        <div class="bento-card">
+            <div class="bento-label">📉 Test Accuracy</div>
+            <div class="bento-value">{:.1%}</div>
+            <div class="bento-sub">gap = {:.1%}</div>
+        </div>
+        <div class="bento-card">
+            <div class="bento-label">🔁 CV Accuracy</div>
+            <div class="bento-value">{:.1%} ± {:.1%}</div>
+            <div class="bento-sub">5-fold stratified</div>
+        </div>
+        <div class="bento-card">
+            <div class="bento-label">🎯 CV F1 (weighted)</div>
+            <div class="bento-value">{:.1%} ± {:.1%}</div>
+            <div class="bento-sub">5-fold stratified</div>
+        </div>
+    </div>
+    """.format(train_acc, test_acc, gap, cv_acc_scores.mean(), cv_acc_scores.std(), cv_f1_scores.mean(), cv_f1_scores.std()), unsafe_allow_html=True)
+
+    # --- Plot with dark theme ---
+    fig, ax = plt.subplots(figsize=(6, 3))
+    fig.patch.set_facecolor('#111128')
+    ax.set_facecolor('#111128')
+    ax.plot(range(1, 6), cv_acc_scores, 'o-', color='#f59e0b', label='Accuracy per fold')
+    ax.axhline(y=cv_acc_scores.mean(), color='#22c55e', linestyle='--', label=f'Mean = {cv_acc_scores.mean():.1%}')
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Fold", color='#c8c8ff')
+    ax.set_ylabel("Accuracy", color='#c8c8ff')
+    ax.set_title(f"{model_name} – Emotion Model 5-Fold CV Scores", color='#e0e0ff')
+    ax.legend(facecolor='#1e1e3a', labelcolor='#c8c8ff')
+    ax.tick_params(colors='#c8c8ff')
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.spines['bottom'].set_visible(True)
+    ax.spines['left'].set_visible(True)
+    ax.spines['bottom'].set_color('#2a2a5a')
+    ax.spines['left'].set_color('#2a2a5a')
+    st.pyplot(fig)
+    plt.close()
+
+    # --- Recommendation Box ---
+    if gap > 0.05:
+        box_color = '#ef4444'
+        icon = '⚠️'
+        title = 'Potential Overfitting Detected'
+        message = f"""
+        Train accuracy ({train_acc:.1%}) is **{gap:.1%} higher** than test accuracy ({test_acc:.1%}).  
+        The model may be memorising the training data.
+        """
+    elif cv_acc_scores.std() > 0.03:
+        box_color = '#f59e0b'
+        icon = 'ℹ️'
+        title = 'Moderate Instability'
+        message = f"""
+        Cross‑validation accuracy varies by {cv_acc_scores.std():.1%}.  
+        The model's performance depends on the data split.
+        """
+    else:
+        box_color = '#22c55e'
+        icon = '✅'
+        title = 'Good Generalisation'
+        message = f"""
+        Train‑test gap is only {gap:.1%} and cross‑validation scores are stable (std = {cv_acc_scores.std():.1%}).  
+        The model is not overfitting and should perform well on unseen emotion data.
+        """
+    
+    st.markdown(f"""
+    <div style='background:rgba(99,102,241,0.07); border-left:3px solid {box_color};
+                border-radius:0 8px 8px 0; padding:12px 14px; margin-top:16px;'>
+        <span style='color:#e0e0ff; font-weight:700;'>{icon} {title}</span><br>
+        <span style='color:#9999cc; font-size:12px;'>{message}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ──────────────────────────────────────────
