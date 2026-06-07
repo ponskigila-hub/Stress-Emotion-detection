@@ -17,11 +17,14 @@ from imblearn.combine import SMOTETomek
 def build_model(name: str):
     """Return an untrained classifier by name."""
     if name == "Logistic Regression":
-        return LogisticRegression(max_iter=2000, class_weight="balanced", C=0.01)
+        # Lower C = stronger regularization (L2 by default)
+        return LogisticRegression(max_iter=2000, class_weight="balanced", C=0.001)
     elif name == "Naive Bayes":
-        return MultinomialNB(alpha=1.0)
+        # Higher alpha = stronger smoothing (less overfitting)
+        return MultinomialNB(alpha=2.0)
     elif name == "Linear SVM":
-        return LinearSVC(class_weight="balanced", max_iter=5000, C=0.1)
+        # Lower C = stronger regularization (L2)
+        return LinearSVC(class_weight="balanced", max_iter=5000, C=0.01)
     else:
         raise ValueError(f"Unknown model: {name}")
 
