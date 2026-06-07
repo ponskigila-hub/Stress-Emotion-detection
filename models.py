@@ -1,30 +1,21 @@
-"""
-models.py — ML model constructors and data balancing strategies for MindScan.
-"""
-
+# models.py (updated)
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.pipeline import Pipeline
 from imblearn.over_sampling import RandomOverSampler, SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.combine import SMOTETomek
 
-
-# ==========================================
-# MODEL FACTORY
-# ==========================================
 def build_model(name: str):
-    """Return an untrained classifier by name."""
     if name == "Logistic Regression":
-        # Lower C = stronger regularization (L2 by default)
-        return LogisticRegression(max_iter=2000, class_weight="balanced", C=0.001)
+        return LogisticRegression(max_iter=2000, class_weight="balanced", C=1.0, penalty='l2', solver='saga')
     elif name == "Naive Bayes":
-        # Higher alpha = stronger smoothing (less overfitting)
-        return MultinomialNB(alpha=2.0)
+        return MultinomialNB(alpha=0.1)
     elif name == "Linear SVM":
-        # Lower C = stronger regularization (L2)
-        return LinearSVC(class_weight="balanced", max_iter=5000, C=0.01)
+        return LinearSVC(class_weight="balanced", max_iter=5000, C=1.0)
     else:
         raise ValueError(f"Unknown model: {name}")
 
