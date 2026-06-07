@@ -10,7 +10,7 @@ import seaborn as sns
 import streamlit as st
 from streamlit.components.v1 import html
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold   # 🔍 NEW: added cross_val_score, StratifiedKFold
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
@@ -189,8 +189,9 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
 
     all_steps = [
         "Memuat data & preprocessing",
-        "Fit TF-IDF Vectorizer",
-        f"Balancing: {balance_strategy}",
+        "Split data (train/test)",
+        "Fit TF-IDF pada TRAIN",
+        f"Balancing pada TRAIN: {balance_strategy}",
         f"Training: {model_name}",
         "Evaluasi model",
         "Selesai ✓",
@@ -208,38 +209,54 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
 
     done = []
 
-    # Step 1
+    # Step 1: Load data
     current = all_steps[0]
     progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
     time.sleep(0.3)
-    X_emotion = emotion_df["clean_text"];  y_emotion = emotion_df["label"]
-    X_stress  = stress_df["clean_text"];   y_stress  = stress_df["stress_label"]
+    X_emotion = emotion_df["clean_text"]
+    y_emotion = emotion_df["label"]
+    X_stress_text = stress_df["clean_text"]
+    y_stress = stress_df["stress_label"]
     done.append(current)
 
-    # Step 2
+    # Step 2: Split stress data into train/test (before any vectorization)
     current = all_steps[1]
     progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
     time.sleep(0.3)
-    tfidf = TfidfVectorizer(max_features=tfidf_features, ngram_range=(1, 2))
-    X_vec = tfidf.fit_transform(X_stress)
+    X_train_s_text, X_test_s_text, y_train_s, y_test_s = train_test_split(
+        X_stress_text, y_stress, test_size=test_size, random_state=42
+    )
     done.append(current)
 
-    # Step 3
+    # Step 3: Fit TF-IDF on TRAIN texts only, then transform both train and test
     current = all_steps[2]
     progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
     time.sleep(0.3)
-    try:
-        X_resampled, y_resampled = apply_balancing(X_vec, y_stress, balance_strategy)
-    except Exception as e:
-        st.error(f"Balancing gagal: {e}. Menggunakan data original.")
-        X_resampled, y_resampled = X_vec, y_stress
+    tfidf = TfidfVectorizer(max_features=tfidf_features, ngram_range=(1, 2))
+    X_train_s_vec = tfidf.fit_transform(X_train_s_text)   # fit on train only
+    X_test_s_vec  = tfidf.transform(X_test_s_text)        # transform test
     done.append(current)
 
-    # Step 4 — train both models
+    # Step 4: Apply balancing ONLY on training vectors and training labels
     current = all_steps[3]
     progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
     time.sleep(0.3)
+    try:
+        X_resampled, y_resampled = apply_balancing(X_train_s_vec, y_train_s, balance_strategy)
+    except Exception as e:
+        st.error(f"Balancing gagal: {e}. Menggunakan data original.")
+        X_resampled, y_resampled = X_train_s_vec, y_train_s
+    done.append(current)
 
+    # Step 5: Train stress model on balanced training data
+    current = all_steps[4]
+    progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
+    time.sleep(0.3)
+    stress_model = build_model(model_name)
+    stress_model.fit(X_resampled, y_resampled)
+    done.append(current)
+
+    # --- Emotion model (unchanged) ---
     X_train_e, X_test_e, y_train_e, y_test_e = train_test_split(
         X_emotion, y_emotion, test_size=test_size, random_state=42
     )
@@ -249,18 +266,11 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     ])
     emotion_pipeline.fit(X_train_e, y_train_e)
 
-    X_train_s, X_test_s, y_train_s, y_test_s = train_test_split(
-        X_resampled, y_resampled, test_size=test_size, random_state=42
-    )
-    stress_model = build_model(model_name)
-    stress_model.fit(X_train_s, y_train_s)
-    done.append(current)
-
-    # Step 5 — evaluate
-    current = all_steps[4]
+    # Step 6: Evaluate stress model on ORIGINAL test set (unbalanced)
+    current = all_steps[5]
     progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
 
-    pred_stress  = stress_model.predict(X_test_s)
+    pred_stress  = stress_model.predict(X_test_s_vec)      # test on original test vectors
     pred_emotion = emotion_pipeline.predict(X_test_e)
 
     acc_s  = round(accuracy_score(y_test_s,  pred_stress),  4)
@@ -269,12 +279,15 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     f1_s   = round(f1_score(y_test_s,        pred_stress,  average="weighted", zero_division=0), 4)
     acc_e  = round(accuracy_score(y_test_e,  pred_emotion), 4)
 
-    done += [all_steps[4], all_steps[5]]
+    done += [all_steps[5], all_steps[6]]
     progress_ph.markdown(render_progress(done), unsafe_allow_html=True)
 
-    # 🔍 NEW: Overfitting & Cross-Validation Analysis (Stress Model)
+    # For visualisation only: create a full TF-IDF matrix (using same tfidf fitted on train)
+    X_full_vec = tfidf.transform(X_stress_text)   # used for keyword analysis
+
+    # 🔍 Overfitting & Cross-Validation Analysis (Stress Model)
     with st.expander("🔍 Overfitting & Cross-Validation Analysis (Stress Model)", expanded=False):
-        _render_overfitting_analysis(stress_model, X_train_s, y_train_s, X_test_s, y_test_s, X_resampled, y_resampled, model_name)
+        _render_overfitting_analysis(stress_model, X_resampled, y_resampled, X_test_s_vec, y_test_s, X_resampled, y_resampled, model_name)
 
     # Save to session
     st.session_state.emotion_model = emotion_pipeline
@@ -291,7 +304,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    _render_tfidf_analysis(tfidf, X_vec)
+    _render_tfidf_analysis(tfidf, X_full_vec)   # use full dataset for keyword display
 
     if model_name in ["Logistic Regression", "Linear SVM"]:
         _render_feature_importance(stress_model, tfidf)
@@ -302,7 +315,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     with c2:
         _render_classification_report(y_test_s, pred_stress)
 
-    # ── Emotion evaluation ──
+    # ── Emotion evaluation (unchanged) ──
     st.markdown("""<hr style="border:1px solid rgba(99,102,241,0.2);margin:30px 0 25px;">""", unsafe_allow_html=True)
     st.markdown("## Emotion Model Evaluation")
 
@@ -314,7 +327,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
 
     _render_metric_cards(acc_e2, prec_e, rec_e, f1_e, "emotion model")
 
-    # 🔍 NEW: Overfitting & Cross-Validation for Emotion Model
+    # 🔍 Overfitting & Cross-Validation for Emotion Model
     with st.expander("🔍 Overfitting & Cross-Validation Analysis (Emotion Model)", expanded=False):
         _render_overfitting_analysis_emotion(
             emotion_pipeline,
@@ -332,6 +345,9 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
         _render_classification_report(y_test_e, pred_emotion2)
 
 
+# ──────────────────────────────────────────
+# 🔍 OVERFITTING & CROSS-VALIDATION (Stress Model)
+# ──────────────────────────────────────────
 def _render_overfitting_analysis(model, X_train, y_train, X_test, y_test, X_full, y_full, model_name):
     """
     Computes train/test gap and performs k-fold cross-validation (5 folds)
@@ -407,7 +423,6 @@ def _render_overfitting_analysis(model, X_train, y_train, X_test, y_test, X_full
         message = f"""
         Train accuracy ({train_acc:.1%}) is **{gap:.1%} higher** than test accuracy ({test_acc:.1%}).  
         The model may be memorising the training data.
-
         """
     elif cv_acc_scores.std() > 0.03:
         box_color = '#f59e0b'
