@@ -16,6 +16,9 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, confusion_matrix, classification_report,
 )
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import SVC
 
 from models import build_model, apply_balancing, STRATEGY_INFO
 from data_loader import STRESS_LABEL_MAP
@@ -192,7 +195,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
         "Split data (train/test)",
         "Fit TF-IDF pada TRAIN",
         f"Balancing pada TRAIN: {balance_strategy}",
-        f"Training: {model_name}",
+        f"Training stress model: {model_name}",
         "Evaluasi model",
         "Selesai ✓",
     ]
@@ -256,21 +259,43 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     stress_model.fit(X_resampled, y_resampled)
     done.append(current)
 
-    # --- Emotion model (unchanged) ---
+    # ========== EMOTION MODEL (konservatif, fallback untuk SVM) ==========
     X_train_e, X_test_e, y_train_e, y_test_e = train_test_split(
         X_emotion, y_emotion, test_size=test_size, random_state=42
     )
+
+    # Batasi fitur sangat ketat
+    emotion_max_features = min(1000, tfidf_features)   # maksimal 1000 fitur
+    emotion_tfidf = TfidfVectorizer(
+        max_features=emotion_max_features,
+        ngram_range=(1, 1),
+        sublinear_tf=True,
+        min_df=2,
+        max_df=0.8
+    )
+
+    # Pilih classifier: Linear SVM sering jelek di emotion, fallback ke Logistic Regression
+    if model_name == "Linear SVM":
+        emotion_clf = LogisticRegression(C=0.0001, max_iter=2000, class_weight="balanced")
+    elif model_name == "Logistic Regression":
+        emotion_clf = LogisticRegression(C=0.0001, max_iter=2000, class_weight="balanced")
+    elif model_name == "Naive Bayes":
+        emotion_clf = MultinomialNB(alpha=10.0)
+    else:
+        emotion_clf = LogisticRegression(C=0.0001, max_iter=2000, class_weight="balanced")
+
     emotion_pipeline = Pipeline([
-        ("tfidf", TfidfVectorizer(max_features=tfidf_features, ngram_range=(1, 2))),
-        ("clf",   build_model(model_name)),
+        ("tfidf", emotion_tfidf),
+        ("clf",   emotion_clf)
     ])
     emotion_pipeline.fit(X_train_e, y_train_e)
+    # ==========================================================================
 
-    # Step 6: Evaluate stress model on ORIGINAL test set (unbalanced)
+    # Step 6: Evaluate
     current = all_steps[5]
     progress_ph.markdown(render_progress(done, current), unsafe_allow_html=True)
 
-    pred_stress  = stress_model.predict(X_test_s_vec)      # test on original test vectors
+    pred_stress  = stress_model.predict(X_test_s_vec)
     pred_emotion = emotion_pipeline.predict(X_test_e)
 
     acc_s  = round(accuracy_score(y_test_s,  pred_stress),  4)
@@ -283,7 +308,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     progress_ph.markdown(render_progress(done), unsafe_allow_html=True)
 
     # For visualisation only: create a full TF-IDF matrix (using same tfidf fitted on train)
-    X_full_vec = tfidf.transform(X_stress_text)   # used for keyword analysis
+    X_full_vec = tfidf.transform(X_stress_text)
 
     # 🔍 Overfitting & Cross-Validation Analysis (Stress Model)
     with st.expander("🔍 Overfitting & Cross-Validation Analysis (Stress Model)", expanded=False):
@@ -304,7 +329,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     
     st.markdown("<br>", unsafe_allow_html=True)
 
-    _render_tfidf_analysis(tfidf, X_full_vec)   # use full dataset for keyword display
+    _render_tfidf_analysis(tfidf, X_full_vec)
 
     if model_name in ["Logistic Regression", "Linear SVM"]:
         _render_feature_importance(stress_model, tfidf)
@@ -315,7 +340,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     with c2:
         _render_classification_report(y_test_s, pred_stress)
 
-    # ── Emotion evaluation (unchanged) ──
+    # ── Emotion evaluation ──
     st.markdown("""<hr style="border:1px solid rgba(99,102,241,0.2);margin:30px 0 25px;">""", unsafe_allow_html=True)
     st.markdown("## Emotion Model Evaluation")
 
@@ -329,12 +354,14 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
 
     # 🔍 Overfitting & Cross-Validation for Emotion Model
     with st.expander("🔍 Overfitting & Cross-Validation Analysis (Emotion Model)", expanded=False):
+        # Tampilkan nama model yang sebenarnya (fallback jika SVM)
+        emotion_model_name = model_name if model_name != "Linear SVM" else "Logistic Regression (fallback)"
         _render_overfitting_analysis_emotion(
             emotion_pipeline,
             X_train_e, y_train_e,
             X_test_e, y_test_e,
-            X_emotion, y_emotion,   # full dataset (original texts, not resampled)
-            model_name
+            X_emotion, y_emotion,
+            emotion_model_name
         )
 
     ec1, ec2 = st.columns(2)
