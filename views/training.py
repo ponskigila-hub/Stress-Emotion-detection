@@ -274,15 +274,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
         max_df=0.8
     )
 
-    # Pilih classifier: Linear SVM sering jelek di emotion, fallback ke Logistic Regression
-    if model_name == "Linear SVM":
-        emotion_clf = LogisticRegression(C=0.0001, max_iter=2000, class_weight="balanced")
-    elif model_name == "Logistic Regression":
-        emotion_clf = LogisticRegression(C=0.0001, max_iter=2000, class_weight="balanced")
-    elif model_name == "Naive Bayes":
-        emotion_clf = MultinomialNB(alpha=10.0)
-    else:
-        emotion_clf = LogisticRegression(C=0.0001, max_iter=2000, class_weight="balanced")
+    emotion_clf = build_model(model_name)
 
     emotion_pipeline = Pipeline([
         ("tfidf", emotion_tfidf),
