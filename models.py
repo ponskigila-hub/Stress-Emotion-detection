@@ -38,9 +38,6 @@ def apply_balancing(X_vec, y, strategy: str):
     elif strategy == "Random Undersampling":
         sampler = RandomUnderSampler(random_state=42)
 
-    elif strategy == "SMOTETomek":
-        sampler = SMOTETomek(random_state=42)
-
     else:  # "Tanpa Balancing"
         return X_vec, y
 
@@ -59,9 +56,6 @@ STRATEGY_INFO = {
     ),
     "Random Undersampling": (
         "Mengurangi sampel kelas mayoritas secara acak.", "#f59e0b"
-    ),
-    "SMOTETomek": (
-        "Kombinasi SMOTE + Tomek Links untuk boundary yang bersih.", "#22c55e"
     ),
     "Tanpa Balancing": (
         "Tidak ada penyeimbangan — gunakan jika data sudah balance.", "#ef4444"
