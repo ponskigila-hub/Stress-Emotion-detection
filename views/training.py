@@ -113,7 +113,7 @@ def _render_config():
     )
     balance_strategy = st.selectbox(
         "Strategi Balancing Data",
-        ["Random Oversampling", "SMOTE", "Random Undersampling", "SMOTETomek", "Tanpa Balancing"],
+        ["Random Oversampling", "SMOTE", "Random Undersampling", "Tanpa Balancing"],
         help="Strategi untuk menyeimbangkan distribusi kelas label",
     )
     tfidf_features = st.slider("TF-IDF Max Features", 1000, 20000, 10000, 1000)
