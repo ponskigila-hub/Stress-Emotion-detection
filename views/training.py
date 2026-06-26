@@ -259,7 +259,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     stress_model.fit(X_resampled, y_resampled)
     done.append(current)
 
-    # ========== EMOTION MODEL (konservatif, fallback untuk SVM) ==========
+    # ========== EMOTION MODEL ==========
     X_train_e, X_test_e, y_train_e, y_test_e = train_test_split(
         X_emotion, y_emotion, test_size=test_size, random_state=42
     )
@@ -347,7 +347,7 @@ def _run_training(emotion_df, stress_df, model_name, balance_strategy, tfidf_fea
     # 🔍 Overfitting & Cross-Validation for Emotion Model
     with st.expander("🔍 Overfitting & Cross-Validation Analysis (Emotion Model)", expanded=False):
         # Tampilkan nama model yang sebenarnya (fallback jika SVM)
-        emotion_model_name = model_name if model_name != "Linear SVM" else "Logistic Regression (fallback)"
+        emotion_model_name = model_name 
         _render_overfitting_analysis_emotion(
             emotion_pipeline,
             X_train_e, y_train_e,
